@@ -1,0 +1,232 @@
+---
+title: "Social Network Analysis 1"
+subtitle: "COST Action Training School in Computational Opinion Analysis -- COpA"
+footer: "COpA -- 28th May 2025, Elbasan"
+author: "Johannes B. Gruber | GESIS"
+format: 
+  revealjs:
+    embed-resources: true
+    theme: [default, custom.scss]
+    smaller: true
+    scrollable: true
+    incremental: true   
+    logo: https://www.opinion-network.eu/img/opinion_i.gif
+execute: 
+  eval: true
+bibliography: references.bib
+---
+
+# Introduction
+## What are *graphs*?
+
+
+## What are *networks*?
+
+
+## SNA Origins
+
+:::: {.columns}
+::: {.column width="45%"}
+![](media/Simmel.png){width=41.5%} ![](media/jacob_moreno.jpg){width=41%}<br>[Left, Georg **Simmel** (1858-1918)<br>Right, Jacob **Moreno** (1889-1974)]{.nord-footer}
+
+**Simmel**'s [[-@simmel2010conflict]]{.nord-light} "The Web of Group Affiliations" and **Moreno**'s [[-@moreno1934shall]]{.nord-light} *Who Shall Survive?* are generally considered to be the intellectual beginnings of SNA.
+:::
+
+::: {.column width="10%"}
+:::
+
+::: {.column width="45%"}
+![](media/who_shall_survive.gif){width=100%}
+
+*Who Shall Survive?* Helen Hall **Jennings** co-authored this classic without credit.
+:::
+::::
+
+
+## SNA Uptake
+
+:::: {.columns}
+::: {.column width="45%"}
+![The vertical line marks the publication of the first edition of the<br>*Sage Handbook of Social Network Analysis* [[@scott2011sage]]{.nord-light}.<br>Figure reproduced from [[@mclevey2023sage]]{.nord-light}.](media/social_networks_over_time.png){#fig-social_networks_over_time width=80%}
+:::
+
+::: {.column width="55%"}
+![Latent topics in *Social Networks* over time. Reproduced from [@mclevey2023sage]{.nord-light}.](media/mclevey_scott_carrington_sna_topic_heatmap.png){#fig-mclevey_scott_carrington_sna_topic_heatmap}
+
+SNA (and network science more generally) is [increasingly computational]{.kn-pink} [[see also @tindall2022big]]{.nord-light}.
+:::
+::::
+
+
+## Example: Divided They Blog
+
+:::: {.columns}
+::: {.column width="50%"}
+![](media/divided_they_blog.png){#fig-divided_they_blog width="100%" .shadow-img}
+:::
+
+::: {.column width="50%"}
+$\longleftarrow$<br>This famous figure from @adamic2005political shows a conservative-liberal divide in the American political blogosphere circa 2004.
+
+- Nodes: political blogs
+- Edges: links [("citations")]{.nord-light} to other blogs
+- Color: liberal (blue), conservative (red)
+- Size: indegree
+- Layout: force directed
+
+<br>
+
+[Is the network structure<br>[[self-evident]{.kn-pink}]{.large-text}<br>here?]{.fragment}
+
+:::
+::::
+
+## Divided They Blog: Alternative Plots
+
+
+
+## How sure are you?
+
+:::: {.columns}
+::: {.column width="50%"}
+![](media/divided_they_blog.png){width=100% .shadow-img}
+:::
+
+::: {.column width="50%"}
+#### Common pitfalls and problems
+
+[@peixoto2021modularity; @peixoto2023descriptive; @peixoto2021hairball]{.nord-footer}
+
+- (Implicitly?) believing some approaches are more "model-free" than others
+- (Implicitly?) believing that network structure will be self-evident and our intuitions will hold up when reasoning about high-dimensional network structure
+
+Which often translates to:
+
+- using heuristic approaches [(esp. modularity-maximization)]{.nord-light} to partition/reduce networks
+- interpreting generic network visualizations [(esp. force-directed)]{.nord-light} without sufficient model criticism
+:::
+::::
+
+## Nope
+
+**Pareidolia** (/ˌpærɪˈdoʊliə, ˌpɛər-/;[1] also US: /ˌpɛəraɪ-/)[2] is the tendency for perception to impose a meaningful interpretation on a nebulous stimulus, usually visual, so that one detects an object, pattern, or meaning where there is none.
+
+:::: {.columns}
+::: {.column width="55%"}
+![Figure reproduced from @peixoto2023descriptive](media/face_mars.png){width=86%}
+:::
+
+::: {.column width="5%"}
+:::
+
+::: {.column width="40%"}
+![😂 [From https://x.com/GrandjeanMartin/status/1600154712380014594]{.nord-light}](media/jaws.png){width=80%}
+:::
+::::
+
+
+
+## Community Detection...
+
+[*...is like a good reduction*]{.kn-pink}
+
+:::: {.columns}
+::: {.column width="50%"}
+![](media/reduction.jpg){width=70% .shadow-img}
+:::
+
+::: {.column width="50%"}
+- an essential topic in network analysis
+- high-level goal is to simplify network structure by partitioning and [reducing]{.kn-pink} complex observed networks
+- there are different kinds of structure and subgroups
+- there are different methods and models we can use
+:::
+::::
+
+::: {.notes}
+**The reduction analogy**
+
+- Starting with Complexity: Just as you begin cooking with a variety of ingredients in a sauce, you start with a complex network that has many nodes and edges representing different interactions or relationships.
+- Reducing to Essentials: In cooking, reducing a sauce involves simmering it to evaporate excess liquid, concentrating the flavors, and focusing on the essential ingredients. Similarly, blockmodeling simplifies the network by grouping similar nodes into blocks or communities, thereby reducing the complexity of the network and focusing on the essential structural patterns.
+- Enhancing Understanding: The goal of reducing a sauce is to create a richer, more flavorful dish that enhances the overall meal. Likewise, the goal of blockmodeling is to create a clearer, more understandable representation of the network, making it easier to identify key patterns, relationships, and structures.
+- Striking the Right Balance: Just as you must be careful not to reduce a sauce too much (which could lead to an overly intense or burnt flavor), in blockmodeling, it’s important to strike the right balance between simplification and preserving the network’s meaningful structure. Over-simplification could result in loss of important details.
+
+- there are different kinds of structure and subgroups
+  - assortative-connective, equivalent-positional
+- there are different methods and models we can use
+  - **heuristic-descriptive**
+    - have been popular for some time
+    - are deeply flawed and should be avoided
+  - **generative-inferential**
+    - not new [[e.g., @holland1983stochastic; @snijders1997estimation; @bearman2004chains]]{.nord-light}, better and more accessible than ever
+    - strong opinion: must become be the standard
+:::
+
+# Part 2: Hands on
+
+
+# Potential slides
+
+##
+
+### Heuristic Community Detection<br>via Modularity Maximization
+
+<br><br>
+
+:::: {.columns}
+::: {.column width="55%"}
+
+The Louvain [[@blondel2008fast]]{.nord-light} algorithm purports to detect communities in networks by maximizing a "modularity" score $Q$ [[@newman2004finding]]{.nord-light}, where higher $Q$ values indicate more modular networks.
+
+![](media/Louvain.png){width=100%}
+:::
+
+::: {.column width="5%"}
+:::
+
+::: {.column width="40%"}
+![Figure reproduced from [@blondel2008fast]{.nord-light}](media/Louvain_alg.png){.shadow-img width=100%}
+:::
+::::
+
+::: {.notes}
+It starts by assuming that every node in a network is in it's own community and calculates a modularity score $Q$ for the network. Nodes are then randomly moved into different groups and $Q$ is re-calculated. If it increased, the community assignment is retained. This process continues until the node assignments have maximized $Q$ at the level of the observed network.
+
+Next, a simplified network is created by aggregating nodes into their assigned communities and the modularity maximization process is repeated. Communities are merged with other communities, and the mergers are retained if $Q$ increases. This process continues iteratively until $Q$ has been maximized.
+:::
+
+
+##
+
+:::: {.columns}
+::: {.column width="55%"}
+
+[😲😰😰😰]{.large-text}
+
+Some **well-known problems**:
+
+- the resolution limit
+- getting stuck in local optima
+- creating disconnected communities
+- can only identify assortative structure
+- finds "communities" in random networks
+- the illusion of greater objectivity<br>[[see @moody2023cohesion]]{.nord-footer}
+- simultaneously over- and under-fit<br>[[see @peixoto2023descriptive]]{.nord-footer}
+- often has a degenerate solution space<br>[[see @peixoto2023descriptive]]{.nord-footer}
+- etc.
+
+[There have been some improvements to modularity-maximization approaches [[e.g., @traag2019louvain]]{.nord-light}, but these only go so far. There are **fundamental problems** with the modularity-maximization idea, and heuristic approaches in general.]{.fragment}
+:::
+::: {.column width=45%}
+:::
+::::
+
+::: {.notes}
+...
+
+There are well-known problems with the Louvain algorithm, including **the resolution limit**, which prevents Louvain from detecting meaningful small communities due to inappropriate merging at higher levels. Louvain can also get **stuck in local optima**, causing it to stop looking for better partitions because it "thinks" (incorrectly) that $Q$ has been maximized. And sometimes it **creates disconnected communities**!
+:::
+
+
+# References
+

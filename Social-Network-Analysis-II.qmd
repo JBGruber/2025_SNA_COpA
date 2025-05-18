@@ -1,0 +1,557 @@
+---
+title: "Social Network Analysis 2"
+subtitle: "COST Action Training School in Computational Opinion Analysis -- COpA"
+footer: "COpA -- 28th May 2025, Elbasan"
+author: "Johannes B. Gruber | GESIS"
+format:
+  html: default
+  ipynb:
+    embed-resources: true
+    filters:
+      - filter-code-chunks.lua
+execute: 
+  eval: true
+bibliography: references.bib
+---
+
+# Example 1: Divided They Blog
+
+## Packages and setup
+
+```{r setup}
+#| include: false
+library(tidyverse)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+```
+
+```{r}
+if (!reticulate::condaenv_exists("r-copa")) {
+  packages <- c(
+    "python=3.11",
+    "networkx",
+    "igraph",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    # "community",
+    "cdlib",
+    "imageio",
+    "leidenalg",
+    "graph-tool",
+    "tqdm"
+  )
+  try(reticulate::install_miniconda(update = TRUE), silent = TRUE)
+  reticulate::conda_install("r-copa", packages = packages)
+}
+reticulate::use_condaenv("r-copa")
+```
+
+```{python}
+import networkx as nx
+import igraph as ig
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
+import seaborn as sns
+import requests
+import zipfile
+import io
+import os
+import imageio
+from tqdm import tqdm
+import leidenalg
+```
+
+## The Blogosphere data
+
+```{r}
+graph_file <- "data/polblogs.zip"
+dir.create(dirname(graph_file), showWarnings = FALSE)
+if (!file.exists(graph_file)) {
+  curl::curl_download(
+    "https://public.websites.umich.edu/~mejn/netdata/polblogs.zip",
+    graph_file
+  )
+}
+
+# have a quick look at the data description
+unz(graph_file, "polblogs.txt") |> 
+  readLines() |> 
+  cat(sep = "\n")
+```
+
+```{python}
+graph_file = "data/polblogs.zip"
+os.makedirs(os.path.dirname(graph_file), exist_ok=True)
+
+if not os.path.exists(graph_file):
+    print("Downloading polblogs.zip file...")
+    url = "https://public.websites.umich.edu/~mejn/netdata/polblogs.zip"
+    response = requests.get(url)
+    with open(graph_file, 'wb') as f:
+        f.write(response.content)
+    print("Download complete.")
+
+# have a quick look at the data description
+with zipfile.ZipFile(graph_file, 'r') as zip_ref:
+    with zip_ref.open('polblogs.txt') as f:
+        print(f.read().decode('utf-8'))
+```
+
+
+## graph data structure in `R`
+
+Let's first look at the `igraph` graph class:
+
+```{r}
+polblogs_igraph <- igraph::read_graph(unz(graph_file, "polblogs.gml"), format = "gml") 
+class(polblogs_igraph)
+polblogs_igraph
+```
+
+```{python}
+with zipfile.ZipFile(graph_file, 'r') as zip_ref:
+    with zip_ref.open('polblogs.gml') as f:
+        gml_content = f.read().decode('utf-8')
+        with open("data/polblogs.gml", 'w') as f:
+            f.write(gml_content)
+
+polblogs_ig = ig.Graph.Read_GML("data/polblogs.gml")
+
+print(type(polblogs_ig))
+print(polblogs_ig.summary())
+```
+
+## graph data structure in `R`
+
+We can convert this to a `tidygraph` object:
+
+```{r}
+#| message: false
+library(tidyverse)
+library(tidygraph)
+polblogs_tbl <- tidygraph::as_tbl_graph(polblogs_igraph)
+class(polblogs_tbl)
+polblogs_tbl
+```
+
+
+## graph data structure in `R`/`Python`
+
+Both `igraph` and `tbl_graph` objects essentially consist of two linked tables containing [nodes]{.kn-pink} (aka vertices) and [edges]{.kn-pink}.
+
+```{r}
+polblogs_tbl |> 
+  activate("nodes") |> 
+  as_tibble()
+```
+```{python}
+nodes_df = pd.DataFrame({
+    'id': range(polblogs_ig.vcount()),
+    'value': polblogs_ig.vs['value'],
+    'name': polblogs_ig.vs['label']
+})
+print("\nNodes:")
+print(nodes_df.head())
+```
+
+
+```{r}
+polblogs_tbl |> 
+  activate("edges") |> 
+  as_tibble()
+```
+
+```{python}
+edges_df = pd.DataFrame({
+    'from': [e.source for e in polblogs_ig.es],
+    'to': [e.target for e in polblogs_ig.es]
+})
+print("\nEdges:")
+print(edges_df.head())
+```
+
+
+## working with graph data structures in `R`
+
+We can look up the variables (like political class) for any given node by filtering.
+For example, let's see the node with ID 30:
+
+```{r}
+polblogs_tbl |> 
+  filter(id == 30)
+```
+
+```{python}
+for vertex in polblogs_ig.vs:
+    if vertex['id'] == 30:
+        print(vertex)
+```
+
+:::{.incremental}
+- we can simply use `filter` like this was a normal table 🤯
+- since the data is linked, all the edges belonging to missing nodes disappear as well 😱
+:::
+
+## working with graph data structures in `R`
+
+If we want to see how many left and right blogs are in the data, we can use `count`.
+But only after converting the nodes to a `data.frame`!
+
+```{r}
+polblogs_tbl |>
+  activate("nodes") |>
+  as_tibble() |> 
+  count(ideology = value)
+```
+
+
+```{python}
+left_blogs = []
+right_blogs = []
+for vertex in polblogs_ig.vs:
+    if vertex['value'] == 0:
+        left_blogs.append(vertex)
+    else:
+        right_blogs.append(vertex)
+
+print(f"{len(left_blogs)} left blogs")
+print(f"{len(right_blogs)} right blogs")
+```
+
+## working with graph data structures in `R`
+
+The `value` variable is named terribly and stored in a strange format.
+Let's change that using some more tidyverse functions that work out-of-the-box with `tidygraph` graphs:
+
+```{r}
+polblogs_tbl_new <- polblogs_tbl |> 
+  activate("nodes") |> 
+  mutate(ideology = recode_factor(value, 
+                                  "0" = "left",
+                                  "1" = "right"))
+```
+
+```{python}
+ideology = []
+for vertex in polblogs_ig.vs:
+    if vertex['value'] == 0:
+        ideology.append("left")
+    else:
+        ideology.append("right")
+
+polblogs_ig.vs['ideology'] = ideology
+
+print(polblogs_ig.vs[1])
+```
+
+:::{.notes}
+It's not necessary to store ideology as a factor, but generally good practice in `R`.
+Whenever you have a variable with just a few repeating character values, a factor is more efficient.
+:::
+
+## first insights
+
+We can answer some initial questions about the data:
+
+- how many left and right blogs are there? 
+
+```{r}
+polblogs_tbl_new |> 
+  as_tibble() |> 
+  count(ideology)
+```
+
+```{python}
+polblogs_ig.vs['ideology'].count('left')
+polblogs_ig.vs['ideology'].count('right')
+```
+
+## first insights
+
+We can answer some initial questions about the data:
+
+- how many connections (edges) do nodes have to other nodes?
+
+:::: {.columns}
+::: {.column width="50%"}
+```{r}
+polblogs_tbl_new |> 
+  activate(edges) |> 
+  as_tibble() |> 
+  count(from, sort = TRUE)
+```
+
+Let's have a closer look at the top node:
+
+```{r}
+polblogs_tbl_new |> 
+  filter(id == 855) |> 
+  as_tibble()
+```
+
+:::
+::: {.column width="50%"}
+```{r}
+polblogs_tbl_new |> 
+  activate(edges) |> 
+  as_tibble() |> 
+  count(to, sort = TRUE)
+```
+
+Let's have a closer look at the top node:
+
+```{r}
+polblogs_tbl_new |> 
+  filter(id == 155) |> 
+  as_tibble()
+```
+:::
+::::
+
+## first insights
+
+We can answer some initial questions about the data:
+
+- do left and right blogs reference each other?
+
+```{r}
+polblogs_tbl_new |> 
+  activate(edges) |> 
+  mutate(from_ideo = .N()$ideology[from],
+         to_ideo = .N()$ideology[to]) |> 
+  as_tibble() |> 
+  count(from_ideo, to_ideo)
+```
+
+## visualising graphs in `R`
+
+:::: {.columns}
+::: {.column width="65%"}
+- `ggraph` inherits the idea of a grammar of graphics from `ggplot`
+- hence, we build up plots in layers with visual aesthetics mapped to data
+- the difference is, we address map data from the nodes and edges table
+:::
+
+::: {.column .fragment width="20%"}
+![ggraph](https://ggraph.data-imaginist.com/reference/figures/logo.png)
+:::
+::::
+
+## visualising graphs in `R`
+
+```{r}
+#| output-location: column
+library(ggraph)
+ggraph(graph = polblogs_tbl_new) + 
+  geom_edge_link() + 
+  geom_node_point(aes(colour = ideology))
+```
+
+
+## Recreate the plot from @adamic2005political
+
+```{r}
+#| output-location: column
+polblogs_tbl_new |> 
+  # you can sample the graph to make plotting quicker (but incomplete)
+  # sample_frac(0.1) |> 
+  # the size of the bubbles is influenced by the number of blogs that link to it
+  mutate(referenced = centrality_degree(mode = "in", loops = FALSE)) |> 
+  # remove isolated nodes
+  activate(nodes) |>
+  filter(!node_is_isolated()) |>
+  # the colour of edges is influenced by whether the connection is left, right 
+  # or bipartisan
+  activate(edges) |> 
+  mutate(col = case_when(
+    .N()$ideology[from] == "left" & .N()$ideology[to] == "left" ~ "#2F357E",
+    .N()$ideology[from] == "right" & .N()$ideology[to] == "right" ~ "#D72F32",
+    .N()$ideology[from] == "left" & .N()$ideology[to] == "right" ~ "#f4c23b",
+    .N()$ideology[from] == "right" & .N()$ideology[to] == "left" ~ "#f4c23b"
+  )) |> 
+  # the stress majorization algorithm in ggraph is the closed to the original
+  # force directed layout from
+  ggraph(layout = "stress") +
+  geom_edge_link(aes(colour = col),
+                 arrow = arrow(length = unit(2, "mm"), type = "closed")) +
+  # we map the number of references to the size
+  geom_node_point(aes(fill = ideology, size = referenced),
+                  # black border and a different shape creates bubbles
+                  colour = "black", pch = 21) +
+  scale_fill_manual(values = c(left = "#2F357E", right = "#D72F32")) +
+  scale_edge_colour_identity() + 
+  theme_graph()
+```
+
+## volatile layouts
+
+One thing that always makes me cautious about interpreting network plots is how [volatile]{.kn-pink} the placement of nodes in the plot is and how much it can trick you into finding a pattern where none exists.
+So let's look at an experiment:
+
+:::: {.columns}
+::: {.column width="50%"}
+
+Prepare data for plotting:
+
+```{r}
+set.seed(1)
+plot_data <- polblogs_tbl_new |> 
+  # you can sample the graph to make plotting quicker (but incomplete)
+  sample_frac(0.25) |> 
+  mutate(referenced = centrality_degree(mode = "in", loops = FALSE)) |> 
+  activate(nodes) |>
+  filter(!node_is_isolated()) |>
+  activate(edges) |> 
+  mutate(col = case_when(
+    .N()$ideology[from] == "left" & .N()$ideology[to] == "left" ~ "#2F357E",
+    .N()$ideology[from] == "right" & .N()$ideology[to] == "right" ~ "#D72F32",
+    .N()$ideology[from] == "left" & .N()$ideology[to] == "right" ~ "#f4c23b",
+    .N()$ideology[from] == "right" & .N()$ideology[to] == "left" ~ "#f4c23b"
+  ))
+```
+:::
+::: {.column width="50%"}
+
+Get all available layouts:
+
+```{r}
+layouts <- c(
+  "auto",       # Automatic layout
+  "circle",     # Circular layout
+  "dh",         # Davidson-Harel layout
+  "drl",        # Distributed Recursive Layout
+  "fr",         # Fruchterman-Reingold layout
+  "gem",        # GEM layout
+  "graphopt",   # Graphopt layout
+  "grid",       # Grid layout
+  "kk",         # Kamada-Kawai layout
+  "lgl",        # Large Graph Layout
+  "linear",     # Linear layout
+  "mds",        # Multidimensional Scaling layout
+  "randomly",   # Random layout
+  "sphere",     # Spherical layout
+  "star",       # Star layout
+  "stress",     # Stress majorization layout
+  "sugiyama",   # Sugiyama layout (for layered graphs)
+  "tree"        # Tree layout
+)
+```
+:::
+::::
+
+
+## volatile layouts
+
+```{r layouts}
+#| output-location: column
+dir.create("media/layouts/")
+for (layout in layouts) {
+  
+  # plot status message in interactive sessions
+  if (interactive()) {
+    message("plotting using layout ", layout)
+  }
+  
+  plot_f <- paste0("media/layouts/network_", layout, ".png")
+  
+  if (!file.exists(plot_f)) {
+    p <- plot_data |> 
+      ggraph(layout = layout) +
+      geom_edge_link(aes(colour = col),
+                     arrow = arrow(length = unit(2, "mm"), type = "closed")) +
+      # we map the number of references to the size
+      geom_node_point(aes(fill = ideology, size = referenced),
+                      # black border and a different shape creates bubbles
+                      colour = "black", pch = 21) +
+      scale_fill_manual(values = c(left = "#2F357E", right = "#D72F32")) +
+      scale_edge_colour_identity() + 
+      theme_graph() +
+      labs(caption = paste0("Layout: ", layout))
+    ggsave(filename = plot_f, plot = p, width = 7, height = 7)
+  }
+  
+}
+gif_file <- list.files("media/layouts/", full.names = TRUE) |> 
+  gifski::gifski(gif_file = "media/layouts.gif")
+knitr::include_graphics(gif_file)
+```
+
+## community detection
+
+In the previous figure we used the political orientation of blogs manually assigned by @adamic2005political.
+Usually, we want to detect communities from the network structure itself.
+We learned about the [Louvain]{.kn-pink} and [Leiden]{.kn-pink} algorithms (and about their downsides).
+So let's start with these.
+
+```{r}
+#| output-location: column
+polblogs_tbl_new_grouped <- polblogs_tbl_new |> 
+  activate(nodes) |>
+  to_undirected() |> 
+  mutate(group_louvain = group_louvain(),
+         group_leiden = group_leiden())
+
+polblogs_tbl_new_grouped |> 
+  as_tibble()
+```
+
+## community detection
+
+```{r}
+#| output-location: column
+polblogs_tbl_new_grouped |> 
+  activate(nodes) |>
+  mutate(group_louvain = factor(group_louvain()),
+         group_leiden = factor(group_leiden())) |> 
+  # the size of the bubbles is influenced by the number of blogs that link to it
+  mutate(referenced = centrality_degree(mode = "in", loops = FALSE)) |> 
+  # remove isolated nodes
+  filter(!node_is_isolated()) |>
+  ggraph(layout = "stress") +
+  geom_edge_link(colour = "gray",
+                 arrow = arrow(length = unit(2, "mm"), type = "closed")) +
+  # we map the number of references to the size
+  geom_node_point(aes(fill = group_louvain, size = referenced),
+                  # black border and a different shape creates bubbles
+                  colour = "black", pch = 21) +
+  theme_graph() +
+  labs(title = "Blogosphere grouped by Louvain")
+```
+
+## community detection
+
+```{r}
+#| output-location: column
+polblogs_tbl_new_grouped |> 
+  activate(nodes) |>
+  mutate(group_louvain = factor(group_louvain()),
+         group_leiden = factor(group_leiden())) |> 
+  # the size of the bubbles is influenced by the number of blogs that link to it
+  mutate(referenced = centrality_degree(mode = "in", loops = FALSE)) |> 
+  # remove isolated nodes
+  filter(!node_is_isolated()) |>
+  ggraph(layout = "stress") +
+  geom_edge_link(colour = "gray",
+                 arrow = arrow(length = unit(2, "mm"), type = "closed")) +
+  # we map the number of references to the size
+  geom_node_point(aes(fill = group_leiden, size = referenced),
+                  # black border and a different shape creates bubbles
+                  colour = "black", pch = 21, show.legend = FALSE) +
+  theme_graph() +
+  labs(title = "Blogosphere grouped by Leiden")
+```
+
+
+# Bluesky: What is my network?
+
+# Bluesky: rstats network (???)
+
+# References
+
