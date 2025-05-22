@@ -1,5 +1,9 @@
 ---
 title: "Social Network Analysis 1"
+title-slide-attributes:
+    data-background-image: media/opinion_i.gif
+    data-background-repeat: "repeat"
+    data-background-size: "10%"
 subtitle: "COST Action Training School in Computational Opinion Analysis -- COpA"
 footer: "COpA -- 28th May 2025, Elbasan"
 author: "Johannes B. Gruber | GESIS"
@@ -7,20 +11,303 @@ format:
   revealjs:
     embed-resources: true
     theme: [default, custom.scss]
+    width: 1600
+    height: 900
     smaller: true
     scrollable: true
     incremental: true   
-    logo: https://www.opinion-network.eu/img/opinion_i.gif
+    logo: media/opinion_i.gif
 execute: 
   eval: true
+  cache: true
+  freeze: auto
 bibliography: references.bib
 ---
+
+```{r setup}
+#| include: false
+library(tidygraph)
+library(tidyverse)
+library(tinytable)
+library(ggraph)
+```
 
 # Introduction
 ## What are *graphs*?
 
 
 ## What are *networks*?
+
+```{r}
+nodes <- tribble(
+  ~name, ~course, ~course_id, ~day, ~WG1, ~WG2, ~WG3, ~WG4,
+  "Johannes",  "Social Network Analysis", 1L, 1L, FALSE, TRUE, FALSE, TRUE,
+  "Aleksandra",  "Algorithmic Bias", 2L, 1L, FALSE, TRUE, FALSE, TRUE,
+  "Jamal",  "Multi-lingual Analysis", 3L, 2L, FALSE, TRUE, TRUE, FALSE,
+  "Felicia",  "Multi-modal Analysis", 4L, 2L, FALSE, TRUE, FALSE, FALSE,
+)
+
+edges <- tribble(
+  ~from, ~to, ~same_day, ~same_wg,
+  1, 2, TRUE, 2,
+  1, 3, FALSE, 1,
+  1, 4, FALSE, 1,
+  2, 3, FALSE, 1,
+  2, 4, FALSE, 1,
+  3, 4, TRUE, 1,
+)
+```
+
+
+:::: {.columns}
+::: {.column width="60%"}
+### Nodes (aka. vertices)
+```{r}
+nodes |> 
+  mutate(across(where(is_logical), \(x) c("&#x274C;", "&#x2705;")[x + 1])) |> 
+  tt(theme = "striped") |> 
+  format_tt(markdown = TRUE)
+```
+:::
+
+::: {.column width="10%"}
+:::
+
+::: {.column .fragment width="30%"}
+### Edges
+```{r}
+edges |> 
+  mutate(across(where(is_logical), \(x) c("&#x274C;", "&#x2705;")[x + 1])) |> 
+  tt(theme = "striped")
+```
+:::
+::::
+
+## What are *networks*?
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+instructors_graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+instructors_graph |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "kk") +
+  geom_edge_link(aes(edge_width = same_wg), alpha = .75, show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_node_text(aes(label = name_short), colour = "white") +
+  theme_graph()
+```
+
+[**Undirected** network visualization of instructors using the **Kamada-Kawai** layout algorithm. **Nodes represent instructors** (labeled with their first two initials), edges connect instructors who are members of the **same working group**, with edge thickness proportional to the extent of their shared group membership (**thicker lines indicate stronger connections**).]{.nord-footer .fragment}
+
+## What are *networks*?
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+instructors_graph |> 
+  activate("edges") |> 
+  filter(same_day) |> 
+  activate("nodes") |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "kk") +
+  geom_edge_link( alpha = .75, show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_node_text(aes(label = name_short), colour = "white") +
+  theme_graph()
+```
+
+[Undirected network visualization of instructors using the Kamada-Kawai layout algorithm. Nodes represent instructors (labeled with their first two initials), **edges connect instructors teaching on the same day**.]{.nord-footer .fragment}
+
+## What are *networks*?
+
+```{r}
+opinion_network_file <- "data/opinion_network_people.json"
+if (!file.exists(opinion_network_file)) {
+  dir.create(dirname(opinion_network_file), showWarnings = FALSE)
+  curl::curl_download(
+    "https://www.opinion-network.eu/_next/data/xRdHfDHfWfOUGBbvgoqud/en/people.json",
+    opinion_network_file
+  )
+}
+
+opinion_network_nodes <- jsonlite::read_json("https://www.opinion-network.eu/_next/data/xRdHfDHfWfOUGBbvgoqud/en/people.json") |> 
+  pluck("pageProps", "content", "attributes", "people") |> 
+  bind_rows() |> 
+  unnest(workgroups)
+
+opinion_network_edges <- opinion_network_nodes |> 
+  group_by(workgroups) |> 
+  mutate(
+    to = list(name)
+  ) |> 
+  unnest(to) |> 
+  ungroup() |> 
+  select(from = name, to, workgroups) |> 
+  # remove duplicated edges
+  rowwise() |> 
+  mutate(connection = list(sort(c(from, to)))) |> 
+  group_by(connection) |> 
+  mutate(shared_wgs = length(unique(workgroups))) |> 
+  ungroup() |> 
+  distinct(connection, .keep_all = TRUE) |> 
+  select(-connection) |> 
+  filter(from != to)
+
+opinion_network <- opinion_network_nodes |> 
+  distinct(name, .keep_all = TRUE) |> 
+  tbl_graph(nodes = _, edges = opinion_network_edges)
+
+opinion_network |> 
+  activate("nodes") |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "fr") +
+  geom_edge_link( alpha = .75, show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(aes(fill = country), colour = "darkgrey", size = 1, shape = 21, show.legend = FALSE) +
+  # geom_node_text(aes(label = name_short), colour = "white") +
+  theme_graph()
+```
+
+[Undirected network visualization of the Cost Opinion Network using the Fruchterman-Reingold layout algorithm. Nodes represent members, **edges connect members participating in the same working group**.]{.nord-footer}
+## What is network density
+
+
+## What are *networks*?
+
+```{r}
+elbasan_participants <- c(
+    "Agnieszka Hess",
+    "Aleksandra Krstic",
+    "Anita Ciunova-Shuleska",
+    "Ardita Dylgjeri",
+    "Ardita Reçi",
+    "Barbara Lewandowska-Tomaszczyk",
+    "Barbora Badurova",
+    "Carlos Cunha",
+    "Christian Baden",
+    "Damian Guzek",
+    "Dren Gerguri",
+    "Gabriella Szabó",
+    "Ledia Kazazi",
+    "Lenka Vochocová",
+    "Nikolina Palamidovska-Sterjadovska",
+    "Özlem Delal Abanoz",
+    "Şule Yüksel Özmen",
+    "Valmora Gogo",
+    "Fabio Crestani",
+    "Celia Tsui",
+    "Aleksandra Urman",
+    "Jelena Gledić",
+    "Johannes B. Gruber",
+    "Julia Gottstein",
+    "Myrthe Reuver",
+    "Olga Zagovora",
+    "Roksana Gloc",
+    "Sjoerd Stolwijk",
+    "Bekir Cetintav",
+    "Jamal Abdul Nasir",
+    "Milan Cabarkapa",
+    "Nelda Kote",
+    "Hajo Boomgaarden",
+    "Marina Popescu",
+    "Alban Zeneli",
+    "Ana Jovančević",
+    "Anela Mulahmetović Ibrišimovićc",
+    "Besjana Mema Tosuni",
+    "Carlos Arcila Calderón",
+    "Christine Wendo King'ang'i",
+    "David Blanco-Herrero",
+    "Edlira Gugu",
+    "Ema Kristo",
+    "Emese Domahidi",
+    "Enes Abanoz",
+    "Larisa Mistrean",
+    "Ljubisa Bojic",
+    "Muhamet Jahiri",
+    "Selma Veseljević Jerković",
+    "William Steven González Baquero",
+    
+    "Burak Toraman",
+    "Alba Pérez-Montero",
+    "Melis Yazici",
+    "Felicia Loecherbach"
+  )
+
+opinion_network |> 
+  activate("nodes") |> 
+  filter(name %in% elbasan_participants) |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "graphopt") +
+  geom_edge_link( alpha = .75, show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(aes(fill = country), colour = "darkgrey", size = 5, shape = 21) +
+  theme_graph()
+```
+
+[Undirected network visualization of the Cost Opinion Network **Meeting in Elbasan** using the Graphopt layout algorithm. Nodes represent members, **edges connect members participating in the same working group**.]{.nord-footer}
+
+## What can be Nodes and Edges
+
+### Nodes
+
+- actors
+- concepts
+- texts
+- posts
+
+### Edges
+
+- friednship
+- affiliation
+
+## Discourse Network Analysis
+
+```{r, engine = 'tikz'}
+\tikzset{
+ actor/.style ={circle,draw=red!50!yellow,fill=red!20!yellow,thick,inner sep=1pt},
+ category/.style ={circle,draw=blue!70,fill=blue!40,thick,inner sep=1pt},
+ gray/.style ={line width=0.5mm, dashed,color=gray,inner sep=0pt},
+ black/.style ={line width=0.5mm},
+ annotation/.style = {fill=gray!50, rounded corners=3}
+}
+\begin{tikzpicture}
+   \node [actor] (a1) at (0,1) {$a_1$};
+   \node [actor] (a2) at (0,0) {$a_2$};
+   \node [category] (c1) at (3,0.5) {$c_1$};
+   \draw [gray] (a1) to node [above=1mm,circle,solid,line width=0.2mm] {\textbf{+}} (c1);
+   \draw [gray] (a2) to node [below=1mm,circle,solid,line width=0.2mm] {\textbf{+}} (c1);
+   \draw [black] (a1) to (a2);
+   \node [annotation,right=-3mm] at (0,2.3) {congruence networks};
+
+   \node [actor] (a1) at (5.5,1) {$a_1$};
+   \node [actor] (a2) at (5.5,0) {$a_2$};
+   \node [category] (c1) at (8.5,0.5) {$c_1$};
+   \draw [gray] (a1) to node [above=1mm,circle,solid,line width=0.2mm] {\textbf{+}} (c1);
+   \draw [gray] (a2) to node [below=1mm,circle,solid,line width=0.2mm] {\textbf{--}} (c1);
+   \draw [black] (a1) to (a2);
+   \node [annotation,right=-3mm] at (5.5,2.3) {conflict networks};
+
+   \node [actor] (a1) at (0,-1.5) {$a_1$};
+   \node [actor] (a2) at (0,-2.5) {$a_2$};
+   \node [category] (c1) at (3,-2) {$c_1$};
+   \draw [gray] (a1) to node [above=1mm,circle,solid,line width=0.2mm] {\textbf{--}} (c1);
+   \draw [gray] (a2) to node [below=1mm,circle,solid,line width=0.2mm] {\textbf{--}} (c1);
+   \draw [black] (a1) to (a2);
+
+   \node [actor] (a1) at (5.5,-1.5) {$a_1$};
+   \node [actor] (a2) at (5.5,-2.5) {$a_2$};
+   \node [category] (c1) at (8.5,-2) {$c_1$};
+   \draw [gray] (a1) to node [above=1mm,circle,solid,line width=0.2mm] {\textbf{--}} (c1);
+   \draw [gray] (a2) to node [below=1mm,circle,solid,line width=0.2mm] {\textbf{+}} (c1);
+   \draw [black] (a1) to (a2);
+\end{tikzpicture}
+```
+
+[Illustration: congruence and conflict networks with a binary qualifier variable. Source: @rDNA.2019.]{.nord-footer}
+
 
 
 ## SNA Origins
@@ -57,6 +344,7 @@ SNA (and network science more generally) is [increasingly computational]{.kn-pin
 :::
 ::::
 
+## Small World Networks
 
 ## Example: Divided They Blog
 
@@ -81,9 +369,17 @@ $\longleftarrow$<br>This famous figure from @adamic2005political shows a conserv
 :::
 ::::
 
+## What is Centrality?
+
+- indegree
+
+## What is Homophily?
+
+## What are Structural Holes?
+
 ## Divided They Blog: Alternative Plots
 
-
+![](media/layouts.gif)
 
 ## How sure are you?
 
@@ -162,6 +458,9 @@ Which often translates to:
     - strong opinion: must become be the standard
 :::
 
+
+## What are two mode networks?
+
 # Part 2: Hands on
 
 
@@ -226,6 +525,7 @@ Some **well-known problems**:
 
 There are well-known problems with the Louvain algorithm, including **the resolution limit**, which prevents Louvain from detecting meaningful small communities due to inappropriate merging at higher levels. Louvain can also get **stuck in local optima**, causing it to stop looking for better partitions because it "thinks" (incorrectly) that $Q$ has been maximized. And sometimes it **creates disconnected communities**!
 :::
+
 
 
 # References
