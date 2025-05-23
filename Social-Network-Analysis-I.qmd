@@ -15,7 +15,7 @@ format:
     height: 900
     smaller: true
     scrollable: true
-    incremental: true   
+    incremental: false   
     logo: media/opinion_i.gif
 execute: 
   eval: true
@@ -34,6 +34,109 @@ library(ggraph)
 
 # Introduction
 ## What are *graphs*?
+
+:::: {.columns}
+::: {.column .fragment width="60%"}
+### Mathematical Definition
+
+A **graph** is a mathematical structure consisting of:
+
+- **Vertices** (also called nodes or points)
+- **Edges** (also called links or connections) that connect pairs of vertices
+
+::: {.fragment}
+### Think of it as...
+
+- The mathematical "skeleton" or blueprint
+- A formal way to represent relationships between things
+- Abstract mathematical object with precise rules
+:::
+:::
+::: {.column .fragment width="30%"}
+### Real-world Analogy:
+
+```{r subway, engine="tikz"}
+\begin{tikzpicture}[
+    % Define styles
+    station/.style={circle, fill=white, draw=black, thick, minimum size=8pt},
+    redline/.style={red, very thick},
+    blueline/.style={blue, very thick},
+    greenline/.style={green!60!black, very thick},
+    label/.style={font=\small, black}
+]
+
+% Red Line connections (station to station)
+\draw[redline] (0,2) -- (2,2);    % Oak to Maple
+\draw[redline] (2,2) -- (4,2);    % Maple to Central
+\draw[redline] (4,2) -- (6,2);    % Central to Pine
+\draw[redline] (6,2) -- (8,2);    % Pine to Elm
+
+% Blue Line connections (station to station)
+\draw[blueline] (4,0) -- (4,1);   % Harbor to Market
+\draw[blueline] (4,1) -- (4,2);   % Market to Central
+\draw[blueline] (4,2) -- (4,3);   % Central to University
+\draw[blueline] (4,3) -- (4,4);   % University to Heights
+\draw[blueline] (4,4) -- (6,5);   % Heights to Ridge
+
+% Green Line connections (station to station)
+\draw[greenline] (1,1) -- (2,2);    % Valley to Park
+\draw[greenline] (2,2) -- (3,2.5); 
+\draw[greenline] (3,2.5) -- (4,3); % Park to Transit Hub
+\draw[greenline] (4,3) -- (5,3.25);
+\draw[greenline] (5,3.25) -- (7,4);   % Transit Hub to Summit
+
+% Stations on Red Line
+\node[station] (oak) at (0,2) {};
+\node[station] (maple) at (2,2) {};
+\node[station] (central) at (4,2) {};
+\node[station] (pine) at (6,2) {};
+\node[station] (elm) at (8,2) {};
+
+% Stations on Blue Line
+\node[station] (harbor) at (4,0) {};
+\node[station] (market) at (4,1) {};
+\node[station] (central) at (4,2) {};
+\node[station] (transit) at (4,3) {};
+\node[station] (heights) at (4,4) {};
+\node[station] (ridge) at (6,5) {};
+
+% Stations on Green Line
+\node[station] (valley) at (1,1) {};
+\node[station] (park) at (3,2.5) {};
+\node[station] (university) at (5,3.25) {};
+\node[station] (summit) at (7,4) {};
+
+% Station Labels
+\node[label, below left] at (oak) {Oak St};
+\node[label, below] at (maple) {Maple Ave};
+\node[label, below right] at (central) {Central};
+\node[label, below] at (pine) {Pine Plaza};
+\node[label, below right] at (elm) {Elm End};
+
+\node[label, below] at (harbor) {Harbor};
+\node[label, right] at (market) {Market};
+\node[label, below] at (university) {University};
+\node[label, left] at (heights) {Heights};
+\node[label, above right] at (ridge) {Ridge View};
+
+\node[label, below left] at (valley) {Valley};
+\node[label, above left] at (park) {Park};
+\node[label, above left] at (transit) {Transit Hub};
+\node[label, above right] at (summit) {Summit};
+
+% Legend
+\node[label] at (9,4.5) {\textbf{Metro Lines:}};
+\draw[redline] (9,4) -- (9.5,4) node[label, right] {Red Line};
+\draw[blueline] (9,3.5) -- (9.5,3.5) node[label, right] {Blue Line};
+\draw[greenline] (9,3) -- (9.5,3) node[label, right] {Green Line};
+
+
+\end{tikzpicture}
+```
+
+**subway map** -- shows which stations connect to which, no info about stations themselves
+:::
+::::
 
 
 ## What are *networks*?
@@ -83,12 +186,53 @@ edges |>
 :::
 ::::
 
-## What are *networks*?
+::: {.fragment}
+A [network]{.kn-yellow} is a [graph]{.kn-yellow}  where we [add attributes]{.kn-yellow} to give the graph [real-world meaning]{.kn-yellow}.
+:::
+
+## How do we *visualize* a *networks*?
+
+A network visualization consists of: the [nodes]{.kn-yellow}
 
 ```{r}
 #| fig-width: 10
 #| fig-height: 5
 instructors_graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+instructors_graph |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "linear") +
+  # geom_edge_link(aes(edge_width = same_wg), alpha = .75, show.legend = FALSE) +
+  # scale_edge_width(range = c(1, 2)) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_node_text(aes(label = name_short), colour = "white") +
+  theme_graph()
+```
+
+
+## How do we *visualize* a *networks*?
+
+A network visualization consists of: the nodes, the [edges]{.kn-yellow}
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+instructors_graph |> 
+  mutate(name_short = substr(name, 1, 2)) |> 
+  ggraph(layout = "linear") +
+  geom_edge_link(aes(edge_width = same_wg), alpha = .75, show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_node_text(aes(label = name_short), colour = "white") +
+  theme_graph()
+```
+
+## How do we *visualize* a *networks*?
+
+A network visualization consists of: the nodes, the edges and the [layout]{.kn-yellow}
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
 instructors_graph |> 
   mutate(name_short = substr(name, 1, 2)) |> 
   ggraph(layout = "kk") +
@@ -133,7 +277,7 @@ if (!file.exists(opinion_network_file)) {
   )
 }
 
-opinion_network_nodes <- jsonlite::read_json("https://www.opinion-network.eu/_next/data/xRdHfDHfWfOUGBbvgoqud/en/people.json") |> 
+opinion_network_nodes <- jsonlite::read_json(opinion_network_file) |> 
   pluck("pageProps", "content", "attributes", "people") |> 
   bind_rows() |> 
   unnest(workgroups)
@@ -158,7 +302,8 @@ opinion_network_edges <- opinion_network_nodes |>
 
 opinion_network <- opinion_network_nodes |> 
   distinct(name, .keep_all = TRUE) |> 
-  tbl_graph(nodes = _, edges = opinion_network_edges)
+  tbl_graph(nodes = _, edges = opinion_network_edges) |> 
+  multipleClasses
 
 opinion_network |> 
   activate("nodes") |> 
@@ -172,6 +317,7 @@ opinion_network |>
 ```
 
 [Undirected network visualization of the Cost Opinion Network using the Fruchterman-Reingold layout algorithm. Nodes represent members, **edges connect members participating in the same working group**.]{.nord-footer}
+
 ## What is network density
 
 
@@ -251,17 +397,39 @@ opinion_network |>
 
 ## What can be Nodes and Edges
 
-### Nodes
+:::: {.columns}
+::: {.column width="60%"}
+### Nodes (Vertices) - The "Things"
 
-- actors
-- concepts
-- texts
-- posts
+- **People**: actors, politicians, students, customers, patients
+- **Organizations**: companies, schools, hospitals, governments, NGOs
+- **Places**: cities, countries, buildings, rooms, coordinates
+- **Concepts**: ideas, topics, themes, categories, keywords
+- **Content**: texts, documents, books, articles, posts, tweets
+- **Digital entities**: websites, social media profiles, email addresses
+- **Biological entities**: genes, proteins, species, cells
+- **Objects**: products, artworks, patents, research papers
+:::
 
-### Edges
+::: {.column width="10%"}
+:::
 
-- friednship
+::: {.column .fragment width="30%"}
+### Edges (Links) - The "Relationships"
+
+- **Social connections**: friendship, family ties, romantic relationships, mentorship
+- **Professional ties**: collaboration, employment, supervision, partnership
+- **Communication**: messages, emails, phone calls, citations, mentions
+- **Affiliation**: membership, attendance, participation, ownership
+- **Geographic**: proximity, travel routes, migration patterns
+- **Temporal**: sequence, causation, co-occurrence in time
+- **Semantic**: similarity, opposition, hierarchy, categorization
+- **Transactional**: purchases, payments, exchanges, transfers
+- **Influence**: leadership, endorsement, recommendation, following
 - affiliation
+:::
+::::
+
 
 ## Discourse Network Analysis
 

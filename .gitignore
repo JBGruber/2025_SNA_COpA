@@ -7,4 +7,6 @@ literature/
 Program COpA II Elbasan.pdf
 _extensions/
 *_cache/
-Social-Network-Analysis-I_files/figure-revealjs/unnamed-chunk-8-1.pdf
+Social-Network-Analysis-I_files/
+figure/
+*.html
