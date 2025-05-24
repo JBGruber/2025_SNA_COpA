@@ -26,6 +26,7 @@ bibliography: references.bib
 
 ```{r setup}
 #| include: false
+library(igraph)
 library(tidygraph)
 library(tidyverse)
 library(tinytable)
@@ -190,6 +191,15 @@ edges |>
 A [network]{.kn-yellow} is a [graph]{.kn-yellow}  where we [add attributes]{.kn-yellow} to give the graph [real-world meaning]{.kn-yellow}.
 :::
 
+## Sidenote: Adjacency Matrix
+
+```{r}
+instructors_graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+adjacency <- igraph::as_adjacency_matrix(instructors_graph)
+tt(as_tibble(as.matrix(adjacency), rownames = " "), theme = "striped")
+```
+
+
 ## How do we *visualize* a *networks*?
 
 A network visualization consists of: the [nodes]{.kn-yellow}
@@ -197,7 +207,6 @@ A network visualization consists of: the [nodes]{.kn-yellow}
 ```{r}
 #| fig-width: 10
 #| fig-height: 5
-instructors_graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
 instructors_graph |> 
   mutate(name_short = substr(name, 1, 2)) |> 
   ggraph(layout = "linear") +
@@ -265,140 +274,11 @@ instructors_graph |>
 
 [Undirected network visualization of instructors using the Kamada-Kawai layout algorithm. Nodes represent instructors (labeled with their first two initials), **edges connect instructors teaching on the same day**.]{.nord-footer .fragment}
 
-## What are *networks*?
-
-```{r}
-opinion_network_file <- "data/opinion_network_people.json"
-if (!file.exists(opinion_network_file)) {
-  dir.create(dirname(opinion_network_file), showWarnings = FALSE)
-  curl::curl_download(
-    "https://www.opinion-network.eu/_next/data/xRdHfDHfWfOUGBbvgoqud/en/people.json",
-    opinion_network_file
-  )
-}
-
-opinion_network_nodes <- jsonlite::read_json(opinion_network_file) |> 
-  pluck("pageProps", "content", "attributes", "people") |> 
-  bind_rows() |> 
-  unnest(workgroups)
-
-opinion_network_edges <- opinion_network_nodes |> 
-  group_by(workgroups) |> 
-  mutate(
-    to = list(name)
-  ) |> 
-  unnest(to) |> 
-  ungroup() |> 
-  select(from = name, to, workgroups) |> 
-  # remove duplicated edges
-  rowwise() |> 
-  mutate(connection = list(sort(c(from, to)))) |> 
-  group_by(connection) |> 
-  mutate(shared_wgs = length(unique(workgroups))) |> 
-  ungroup() |> 
-  distinct(connection, .keep_all = TRUE) |> 
-  select(-connection) |> 
-  filter(from != to)
-
-opinion_network <- opinion_network_nodes |> 
-  distinct(name, .keep_all = TRUE) |> 
-  tbl_graph(nodes = _, edges = opinion_network_edges) |> 
-  multipleClasses
-
-opinion_network |> 
-  activate("nodes") |> 
-  mutate(name_short = substr(name, 1, 2)) |> 
-  ggraph(layout = "fr") +
-  geom_edge_link( alpha = .75, show.legend = FALSE) +
-  scale_edge_width(range = c(1, 2)) +
-  geom_node_point(aes(fill = country), colour = "darkgrey", size = 1, shape = 21, show.legend = FALSE) +
-  # geom_node_text(aes(label = name_short), colour = "white") +
-  theme_graph()
-```
-
-[Undirected network visualization of the Cost Opinion Network using the Fruchterman-Reingold layout algorithm. Nodes represent members, **edges connect members participating in the same working group**.]{.nord-footer}
-
-## What is network density
-
-
-## What are *networks*?
-
-```{r}
-elbasan_participants <- c(
-    "Agnieszka Hess",
-    "Aleksandra Krstic",
-    "Anita Ciunova-Shuleska",
-    "Ardita Dylgjeri",
-    "Ardita Reçi",
-    "Barbara Lewandowska-Tomaszczyk",
-    "Barbora Badurova",
-    "Carlos Cunha",
-    "Christian Baden",
-    "Damian Guzek",
-    "Dren Gerguri",
-    "Gabriella Szabó",
-    "Ledia Kazazi",
-    "Lenka Vochocová",
-    "Nikolina Palamidovska-Sterjadovska",
-    "Özlem Delal Abanoz",
-    "Şule Yüksel Özmen",
-    "Valmora Gogo",
-    "Fabio Crestani",
-    "Celia Tsui",
-    "Aleksandra Urman",
-    "Jelena Gledić",
-    "Johannes B. Gruber",
-    "Julia Gottstein",
-    "Myrthe Reuver",
-    "Olga Zagovora",
-    "Roksana Gloc",
-    "Sjoerd Stolwijk",
-    "Bekir Cetintav",
-    "Jamal Abdul Nasir",
-    "Milan Cabarkapa",
-    "Nelda Kote",
-    "Hajo Boomgaarden",
-    "Marina Popescu",
-    "Alban Zeneli",
-    "Ana Jovančević",
-    "Anela Mulahmetović Ibrišimovićc",
-    "Besjana Mema Tosuni",
-    "Carlos Arcila Calderón",
-    "Christine Wendo King'ang'i",
-    "David Blanco-Herrero",
-    "Edlira Gugu",
-    "Ema Kristo",
-    "Emese Domahidi",
-    "Enes Abanoz",
-    "Larisa Mistrean",
-    "Ljubisa Bojic",
-    "Muhamet Jahiri",
-    "Selma Veseljević Jerković",
-    "William Steven González Baquero",
-    
-    "Burak Toraman",
-    "Alba Pérez-Montero",
-    "Melis Yazici",
-    "Felicia Loecherbach"
-  )
-
-opinion_network |> 
-  activate("nodes") |> 
-  filter(name %in% elbasan_participants) |> 
-  mutate(name_short = substr(name, 1, 2)) |> 
-  ggraph(layout = "graphopt") +
-  geom_edge_link( alpha = .75, show.legend = FALSE) +
-  scale_edge_width(range = c(1, 2)) +
-  geom_node_point(aes(fill = country), colour = "darkgrey", size = 5, shape = 21) +
-  theme_graph()
-```
-
-[Undirected network visualization of the Cost Opinion Network **Meeting in Elbasan** using the Graphopt layout algorithm. Nodes represent members, **edges connect members participating in the same working group**.]{.nord-footer}
 
 ## What can be Nodes and Edges
 
 :::: {.columns}
-::: {.column width="60%"}
+::: {.column width="50%"}
 ### Nodes (Vertices) - The "Things"
 
 - **People**: actors, politicians, students, customers, patients
@@ -410,11 +290,7 @@ opinion_network |>
 - **Biological entities**: genes, proteins, species, cells
 - **Objects**: products, artworks, patents, research papers
 :::
-
-::: {.column width="10%"}
-:::
-
-::: {.column .fragment width="30%"}
+::: {.column .fragment width="50%"}
 ### Edges (Links) - The "Relationships"
 
 - **Social connections**: friendship, family ties, romantic relationships, mentorship
@@ -431,7 +307,200 @@ opinion_network |>
 ::::
 
 
-## Discourse Network Analysis
+## Unimodal vs Multimodal Nodes
+
+:::: {.columns}
+::: {.column width="50%"}
+### Unimodal Networks
+
+**One type of node** - all nodes represent the same kind of entity
+
+- **Example**: Social network where all nodes are people
+- **Connections**: Direct relationships between similar entities
+- **Analysis**: Straightforward - compare like with like
+:::
+::: {.column .fragment width="50%"}
+### Multimodal Networks
+
+**Multiple types of nodes** - nodes represent different kinds of entities
+
+- **Example**: Network with both people and organizations
+- **Connections**: Relationships between different types of entities
+- **Analysis**: More complex - different node types may have different properties
+
+:::
+::::
+
+## Example: Discourse Network Analysis
+
+```{r, engine = 'tikz'}
+\tikzset{
+ actor/.style ={circle, draw=red!50!yellow, fill=red!20!yellow, thick, inner sep=1pt},
+ category/.style ={circle, draw=blue!70, fill=blue!40, thick, inner sep=1pt},
+ gray/.style ={line width=0.5mm, color=gray, inner sep=0pt},
+ black/.style ={line width=0.5mm, dashed},
+ annotation/.style = {fill=gray!50, rounded corners=3}
+}
+
+\begin{tikzpicture}[scale=.8]
+
+ \node [actor] (a1) at (0,4) {$a_1$};
+ \node [actor] (a2) at (1,3) {$a_2$};
+ \node [actor] (a3) at (0,2) {$a_3$};
+ \node [actor] (a4) at (1,1) {$a_4$};
+ \node [actor] (a5) at (0,0) {$a_5$};
+
+ \node at (7,5.5) {};
+
+ \node [annotation] at (0,5) {actors};
+
+\end{tikzpicture}
+```
+
+## Example: Discourse Network Analysis
+
+```{r, engine = 'tikz'}
+\tikzset{
+ actor/.style ={circle, draw=red!50!yellow, fill=red!20!yellow, thick, inner sep=1pt},
+ category/.style ={circle, draw=blue!70, fill=blue!40, thick, inner sep=1pt},
+ gray/.style ={line width=0.5mm, color=gray!40, inner sep=0pt},
+ black/.style ={line width=0.5mm, dashed},
+ annotation/.style = {fill=gray!50, rounded corners=3}
+}
+
+\begin{tikzpicture}[scale=.8]
+
+ \node [actor] (a1) at (0,4) {$a_1$};
+ \node [actor] (a2) at (1,3) {$a_2$};
+ \node [actor] (a3) at (0,2) {$a_3$};
+ \node [actor] (a4) at (1,1) {$a_4$};
+ \node [actor] (a5) at (0,0) {$a_5$};
+
+ \node [category] (c1) at (5,4.5) {};
+ \node [category] (c11) at (5,4) {};
+ \node [category] (c2) at (7,3) {};
+ \node [category] (c3) at (6,2.4) {};
+ \node [category] (c31) at (6,2.2) {};
+ \node [category] (c32) at (6,2) {};
+ \node [category] (c33) at (6,1.8) {};
+ \node [category] (c4) at (5,0) {};
+ \node [category] (c5) at (7,1) {};
+
+ \draw [gray] (a1) to (c1);
+ \draw [gray] (a2) to (c11);
+ \draw [gray] (a2) to (c2);
+ \draw [gray] (a2) to (c3);
+ \draw [gray] (a3) to (c31);
+ \draw [gray] (a3) to (c5);
+ \draw [gray] (a4) to (c32);
+ \draw [gray] (a5) to (c33);
+ \draw [gray] (a5) to (c4);
+
+ \node at (7,5.5) {};
+
+ \node [annotation] at (0,5) {actors};
+ \node [annotation] at (6,5) {statements};
+
+\end{tikzpicture}
+```
+
+## Example: Discourse Network Analysis
+
+```{r, engine = 'tikz'}
+\tikzset{
+ actor/.style ={circle, draw=red!50!yellow, fill=red!20!yellow, thick, inner sep=1pt},
+ category/.style ={circle, draw=blue!70, fill=blue!40, thick, inner sep=1pt},
+ gray/.style ={line width=0.5mm, color=gray!40, inner sep=0pt},
+ black/.style ={line width=0.5mm, dashed},
+ annotation/.style = {fill=gray!50, rounded corners=3}
+}
+
+\begin{tikzpicture}[scale=.8]
+
+ \node [actor] (a1) at (0,4) {$a_1$};
+ \node [actor] (a2) at (1,3) {$a_2$};
+ \node [actor] (a3) at (0,2) {$a_3$};
+ \node [actor] (a4) at (1,1) {$a_4$};
+ \node [actor] (a5) at (0,0) {$a_5$};
+
+ \node [category] (c1) at (5,4) {$c_1$};
+ \node [category] (c2) at (7,3) {$c_2$};
+ \node [category] (c3) at (6,2) {$c_3$};
+ \node [category] (c4) at (5,0) {$c_4$};
+ \node [category] (c5) at (7,1) {$c_5$};
+
+ \draw [gray] (a1) to (c1);
+ \draw [gray] (a2) to (c1);
+ \draw [gray] (a2) to (c2);
+ \draw [gray] (a2) to (c3);
+ \draw [gray] (a3) to (c3);
+ \draw [gray] (a3) to (c5);
+ \draw [gray] (a4) to (c3);
+ \draw [gray] (a5) to (c3);
+ \draw [gray] (a5) to (c4);
+
+ \node at (7,5.5) {};
+
+ \node [annotation] at (0,5) {actors};
+ \node [annotation] at (6,5) {concepts};
+
+\end{tikzpicture}
+```
+
+## Example: Discourse Network Analysis
+
+```{r, engine = 'tikz'}
+\tikzset{
+ actor/.style ={circle, draw=red!50!yellow, fill=red!20!yellow, thick, inner sep=1pt},
+ category/.style ={circle, draw=blue!70, fill=blue!40, thick, inner sep=1pt},
+ gray/.style ={line width=0.5mm, color=gray!40, inner sep=0pt},
+ black/.style ={line width=0.5mm, dashed},
+ annotation/.style = {fill=gray!50, rounded corners=3}
+}
+
+\begin{tikzpicture}[scale=.8]
+
+ \node [actor] (a1) at (0,4) {$a_1$};
+ \node [actor] (a2) at (1,3) {$a_2$};
+ \node [actor] (a3) at (0,2) {$a_3$};
+ \node [actor] (a4) at (1,1) {$a_4$};
+ \node [actor] (a5) at (0,0) {$a_5$};
+
+ \node [category] (c1) at (5,4) {$c_1$};
+ \node [category] (c2) at (7,3) {$c_2$};
+ \node [category] (c3) at (6,2) {$c_3$};
+ \node [category] (c4) at (5,0) {$c_4$};
+ \node [category] (c5) at (7,1) {$c_5$};
+
+ \draw [gray] (a1) to (c1);
+ \draw [gray] (a2) to (c1);
+ \draw [gray] (a2) to (c2);
+ \draw [gray] (a2) to (c3);
+ \draw [gray] (a3) to (c3);
+ \draw [gray] (a3) to (c5);
+ \draw [gray] (a4) to (c3);
+ \draw [gray] (a5) to (c3);
+ \draw [gray] (a5) to (c4);
+
+ \draw [black] (a1) to (a2);
+ \draw [black] (a2) to (a3);
+ \draw [black] (a2) to (a5);
+ \draw [black] (a3) to (a4);
+ \draw [black] (a3) to (a5);
+ \draw [black] (a2) to (a4);
+ \draw [black] (a4) to (a5);
+
+
+ \node at (7,5.5) {};
+
+ \node [annotation] at (0,5) {actors};
+ \node [annotation] at (6,5) {concepts};
+
+\end{tikzpicture}
+```
+
+
+## Example: Discourse Network Analysis
 
 ```{r, engine = 'tikz'}
 \tikzset{
@@ -477,6 +546,786 @@ opinion_network |>
 [Illustration: congruence and conflict networks with a binary qualifier variable. Source: @rDNA.2019.]{.nord-footer}
 
 
+## Undirected vs. Directed Edges
+
+:::: {.columns}
+::: {.column width="50%"}
+```{r}
+citation_edgelist <- tibble(
+  citing_paper = c(
+    "Smith2023", "Smith2023", "Smith2023",
+    "Jones2022", "Jones2022", 
+    "Brown2024", "Brown2024", "Brown2024", "Brown2024",
+    "Davis2021", "Davis2021",
+    "Wilson2023", "Wilson2023", "Wilson2023",
+    "Garcia2024", "Garcia2024",
+    "Lee2022"
+  ),
+  cited_paper = c(
+    "Johnson2020", "Williams2019", "Davis2021",
+    "Johnson2020", "Miller2018",
+    "Smith2023", "Jones2022", "Johnson2020", "Williams2019",
+    "Miller2018", "Anderson2017",
+    "Davis2021", "Johnson2020", "Miller2018",
+    "Brown2024", "Wilson2023",
+    "Anderson2017"
+  )
+)
+citation_edgelist |> 
+  tt(theme = "striped") |> 
+  format_tt(markdown = TRUE)
+```
+:::
+::: {.column .fragment width="50%"}
+```{r}
+tbl_graph(edges = citation_edgelist, directed = TRUE) |> 
+  ggraph(layout = 'stress') +
+  geom_edge_link(arrow = arrow(length = unit(4, 'mm')), 
+                  start_cap = circle(3, 'mm'),
+                  end_cap = circle(3, 'mm')) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_label(aes(x = x, y = y, label = name), nudge_y = 0.2, label.size = NA) +
+  theme_graph()
+```
+:::
+::::
+
+## Weighted vs. Unweighted Edges
+
+:::: {.columns}
+::: {.column width="50%"}
+```{r}
+set.seed(1)
+citation_edgelist <- tibble(
+  citing_paper = c(
+    "Smith2023", "Smith2023", "Smith2023",
+    "Jones2022", "Jones2022", 
+    "Brown2024", "Brown2024", "Brown2024", "Brown2024",
+    "Davis2021", "Davis2021",
+    "Wilson2023", "Wilson2023", "Wilson2023",
+    "Garcia2024", "Garcia2024",
+    "Lee2022"
+  ),
+  cited_paper = c(
+    "Johnson2020", "Williams2019", "Davis2021",
+    "Johnson2020", "Miller2018",
+    "Smith2023", "Jones2022", "Johnson2020", "Williams2019",
+    "Miller2018", "Anderson2017",
+    "Davis2021", "Johnson2020", "Miller2018",
+    "Brown2024", "Wilson2023",
+    "Anderson2017"
+  )
+) |> 
+  mutate(times = sample(1:5, n(), replace = TRUE))
+citation_edgelist |> 
+  tt(theme = "striped") |> 
+  format_tt(markdown = TRUE)
+```
+:::
+::: {.column .fragment width="50%"}
+```{r}
+tbl_graph(edges = citation_edgelist, directed = TRUE) |> 
+  ggraph(layout = 'stress') +
+  geom_edge_link(aes(edge_width = times, alpha = times),
+                 arrow = arrow(length = unit(4, 'mm')), 
+                 start_cap = circle(5, 'mm'),
+                 end_cap = circle(5, 'mm'), 
+                 show.legend = FALSE) +
+  scale_edge_width(range = c(1, 2)) +
+  geom_node_point(fill = "firebrick", colour = "darkgrey", size = 10, shape = 21) +
+  geom_label(aes(x = x, y = y, label = name), nudge_y = 0.2, label.size = NA) +
+  theme_graph()
+```
+:::
+::::
+
+## What is a path
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- A path is a route that runs along the links of the network. A path’s length = the number of links the path contains
+- The shortest path between nodes i and j is the path with the fewest number of links
+- Network diameter = the maximum shortest path in the network
+- Average path length = average distance between all pairs of nodes in the network
+:::
+
+::: {.column width="50%"}
+![](media/closeness.gif)
+:::
+::::
+
+## What is Centrality?
+
+<!-- taken from https://github.com/schochastics/MH_netAnaR -->
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- Measures how "central" a node is in a network
+- "Being central" is a very ambiguous, so many measures exist
+- Measures assess centrality with very different structural properties of the network
+:::
+
+::: {.column width="50%"}
+```{r dbces11_basic_plot,echo=FALSE}
+dbces11 <- as_tbl_graph(netrankr::dbces11)
+dbces11 |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link0() +
+  geom_node_point(shape = 21, size = 10, fill = "grey66") +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Centrality?
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- **degree** centrality simply counts the number of neighbors a node has.
+
+:::
+
+::: {.column width="50%"}
+```{r}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(degree = centrality_degree(),
+         highest = degree == max(degree)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Centrality?
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- **degree** centrality simply counts the number of neighbors a node has.
+- **closeness** computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes
+:::
+
+::: {.column width="50%"}
+```{r degree_dbces11_plot,echo=FALSE}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(degree = centrality_closeness(),
+         highest = degree == max(degree)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Centrality?
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- **degree** centrality simply counts the number of neighbors a node has.
+- **closeness** computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes
+- **betweeness** is the number of shortest paths that pass through a node (divided by the total number of shortest paths) 
+:::
+
+::: {.column width="50%"}
+```{r}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(degree = centrality_betweenness(),
+         highest = degree == max(degree)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Centrality?
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- **degree** centrality simply counts the number of neighbors a node has.
+- **closeness** computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes
+- **betweeness** is the number of shortest paths that pass through a node (divided by the total number of shortest paths) 
+- **eigenvector centrality** extends the idea of degree by assuming that a node is central if it is connected to other central nodes.
+:::
+
+::: {.column width="50%"}
+```{r}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(degree = centrality_eigen(),
+         highest = degree == max(degree)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Centrality?
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- **degree** centrality simply counts the number of neighbors a node has.
+- **closeness** computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes
+- **betweeness** is the number of shortest paths that pass through a node (divided by the total number of shortest paths) 
+- **eigenvector centrality** extends the idea of degree by assuming that a node is central if it is connected to other central nodes.
+- **subgraph centrality** is a bit more abstract but what it does is summing up all closed walks weighting them by the 
+inverse factorial of its length.
+:::
+
+::: {.column width="50%"}
+```{r}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(degree = centrality_subgraph(),
+         highest = degree == max(degree)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+:::
+::::
+
+## What is Homophily?
+
+:::: {.columns}
+::: {.column width="60%"}
+### The Basic Principle
+
+**Homophily** is the tendency for similar people to connect to each other in social networks.
+
+::: {.fragment}
+### "Birds of a feather flock together"
+
+- People tend to form connections with others who are similar to them
+- Similarity can be based on many attributes:
+  - Demographics (age, gender, race, education)
+  - Attitudes and beliefs
+  - Behaviors and interests
+  - Geographic location
+  - Social status
+  - Opinions
+:::
+
+::: {.fragment}
+### Two Types of Homophily
+
+- **Selection homophily**: People choose to connect with similar others
+- **Influence homophily**: Connected people become more similar over time
+:::
+:::
+
+::: {.column .fragment width="40%"}
+![](media/divided_they_blog.png)
+:::
+::::
+
+## What are Structural Holes?
+
+:::: {.columns}
+::: {.column width="60%"}
+
+A **structural hole** is a gap between two parts of a network that are not directly connected.
+
+- Social networks consist of groups
+- Often groups are homogeneous
+- There are structural holes between groups [3]
+- Ties that bridge structural holes
+  - are sources of novelty
+  - have information advantages
+  - wield power
+:::
+
+::: {.column  width="40%"}
+```{r}
+cluster1_nodes <- 1:10
+cluster1_edges <- expand.grid(from = cluster1_nodes, to = cluster1_nodes) %>%
+  filter(from < to) %>%
+  sample_frac(0.7)
+
+cluster2_nodes <- 11:18
+cluster2_edges <- expand.grid(from = 11:18, to = 11:18) %>%
+  filter(from < to) %>%
+  sample_frac(0.8)
+
+bridge_edges <- tibble(
+  from = c(5, 7),
+  to = c(12, 15) 
+)
+
+all_edges <- rbind(cluster1_edges, cluster2_edges, bridge_edges)
+
+# Create node attributes
+nodes <- data.frame(
+  id = 1:18,
+  cluster = c(rep("Cluster 1", 10), rep("Cluster 2", 8))
+)
+
+tbl_graph(nodes = nodes, edges = all_edges, directed = FALSE) |> 
+  ggraph(layout = "stress") +
+  # ggforce::geom_mark_hull() +
+  geom_edge_link(color = "gray60", alpha = 0.6, width = 0.8) +
+  geom_node_point(aes(color = cluster), size = 6, show.legend = FALSE) +
+  scale_color_manual(values = c("Cluster 1" = "#20B2AA", "Cluster 2" = "#DAA520")) +
+  geom_abline(intercept = 1, slope = 5, linetype = "dashed") +
+  # geom_node_text(aes(label = x)) +
+  theme_void()
+```
+
+:::
+::::
+
+## What are Structural Holes?
+
+:::: {.columns}
+::: {.column width="50%"}
+### Burt's Theory
+
+**Ronald Burt** developed structural hole theory, arguing that:
+
+- **Social capital** comes from bridging structural holes
+- **Competition** is more about network position than individual attributes
+- **Entrepreneurial opportunities** arise from spanning disconnected groups
+
+### Real-World Examples
+
+- **Venture capitalists**: Connect entrepreneurs with investors
+- **Consultants**: Bridge different industries or departments
+- **Translators**: Connect different language communities
+- **Interdisciplinary researchers**: Bridge different academic fields
+- **Cultural brokers**: Connect different ethnic or cultural groups
+:::
+
+::: {.column .fragment width="50%"}
+### Measuring Structural Holes
+
+**Constraint**: Measures how much a node's network constrains its actions
+- Lower constraint = more structural holes
+- Higher constraint = more redundant connections
+
+**Efficiency**: Ratio of non-redundant contacts
+- Higher efficiency = better positioned to exploit structural holes
+
+```{r}
+dbces11 |> 
+  activate(nodes) |> 
+  mutate(constraint = node_constraint(),
+         highest = constraint == max(constraint)) |> 
+  activate(edges) |> 
+  mutate(highest = .N()$highest[from] | .N()$highest[to]) |> 
+  ggraph(layout = "stress") + 
+  geom_edge_link(aes(col = highest), show.legend = FALSE) +
+  geom_node_point(aes(fill = highest), shape = 21, size = 10, show.legend = FALSE) +
+  geom_node_text(aes(label = name)) +
+  theme_void() +
+  scale_fill_manual(values = c("grey66", "firebrick3")) +
+  scale_edge_color_manual(values = c("grey66", "firebrick3"))
+  coord_equal(clip = "off")
+```
+
+
+### The Trade-off: Brokerage vs. Closure
+
+```{r brokerage_closure, echo=FALSE}
+
+# Brokerage network
+brok_nodes <- tibble(id = 1:7, 
+                    name = c("A", "B", "C", "Broker", "D", "E", "F"),
+                    type = c(rep("Group 1", 3), "Bridge", rep("Group 2", 3)))
+
+brok_edges <- tibble(from = c(1, 2, 3, 4, 5, 6, 7, 4, 4, 4),
+                    to = c(2, 3, 1, 1, 6, 7, 5, 5, 6, 7))
+
+brok_graph <- tbl_graph(nodes = brok_nodes, edges = brok_edges)
+
+p1 <- brok_graph |> 
+  ggraph(layout = "manual", x = c(-1, -1, -1, 0, 1, 1, 1), 
+                           y = c(1, 0, -1, 0, 1, 0, -1)) +
+  geom_edge_link(alpha = 0.8) +
+  geom_node_point(aes(color = type), size = 8) +
+  geom_node_text(aes(label = name), color = "white", size = 3) +
+  scale_color_manual(values = c("Group 1" = "firebrick", "Bridge" = "gold", "Group 2" = "steelblue")) +
+  theme_graph() +
+  theme(legend.position = "none") +
+  labs(title = "Brokerage: Access to diverse information")
+
+# Closure network  
+closure_nodes <- tibble(id = 1:6, name = c("A", "B", "C", "D", "E", "F"))
+closure_edges <- tibble(from = c(1, 1, 1, 2, 2, 3, 3, 4, 5),
+                       to = c(2, 3, 4, 3, 4, 4, 5, 5, 6))
+
+closure_graph <- tbl_graph(nodes = closure_nodes, edges = closure_edges)
+
+p2 <- closure_graph |> 
+  ggraph(layout = "circle") +
+  geom_edge_link(alpha = 0.8) +
+  geom_node_point(color = "forestgreen", size = 8) +
+  geom_node_text(aes(label = name), color = "white", size = 3) +
+  theme_graph() +
+  labs(title = "Closure: Trust and coordination")
+
+# Note: In actual R Markdown, you'd use patchwork or similar to combine plots
+```
+
+**Left**: Brokerage provides information diversity  
+**Right**: Closure provides trust and social cohesion
+:::
+::::
+
+## What are Communities?
+
+:::: {.columns}
+::: {.column width="60%"}
+### Definition
+
+A **community** (or cluster) in a network is a group of nodes that are more densely connected to each other than to the rest of the network.
+
+::: {.fragment}
+### Key Characteristics
+
+- **High internal density**: Many connections within the group
+- **Low external density**: Fewer connections to other groups
+- **Coherent structure**: Members share something meaningful in common
+
+### Why Communities Matter
+
+- **Information flow**: Ideas spread quickly within communities
+- **Social identity**: Communities often reflect shared interests or demographics
+- **Functional units**: Communities may represent meaningful social groups
+- **Network resilience**: Understanding community structure helps predict how networks respond to changes
+:::
+:::
+
+::: {.column .fragment width="40%"}
+### Visual Example
+
+```{r communities_visual, echo=FALSE}
+# Create network with clear community structure
+set.seed(123)
+n_communities <- 3
+n_per_community <- 6
+total_nodes <- n_communities * n_per_community
+
+community_nodes <- tibble(
+  id = 1:total_nodes,
+  community = rep(1:n_communities, each = n_per_community),
+  name = paste0(rep(c("A", "B", "C"), each = n_per_community), 
+                rep(1:n_per_community, n_communities))
+)
+
+# Generate edges with high within-community probability
+community_edges <- tibble()
+for(i in 1:(total_nodes-1)) {
+  for(j in (i+1):total_nodes) {
+    # Higher probability within communities
+    if(community_nodes$community[i] == community_nodes$community[j]) {
+      prob <- 0.4  # High internal connectivity
+    } else {
+      prob <- 0.05  # Low external connectivity
+    }
+    
+    if(runif(1) < prob) {
+      community_edges <- bind_rows(community_edges, 
+                                  tibble(from = i, to = j))
+    }
+  }
+}
+
+community_graph <- tbl_graph(nodes = community_nodes, edges = community_edges)
+
+community_graph |> 
+  ggraph(layout = "fr") +
+  geom_edge_link(alpha = 0.6, color = "grey60") +
+  geom_node_point(aes(color = factor(community)), size = 6) +
+  scale_color_manual(values = c("1" = "firebrick", "2" = "steelblue", "3" = "forestgreen")) +
+  theme_graph() +
+  theme(legend.position = "none")
+```
+
+[Network with three distinct communities - nodes are more connected within their color group]{.nord-footer}
+:::
+::::
+
+## What is Community Detection?
+
+:::: {.columns}
+::: {.column width="50%"}
+### The Challenge
+
+**Community detection** is the computational task of automatically identifying communities in networks.
+
+### Why is it Hard?
+
+- **No universal definition**: What exactly constitutes a "community"?
+- **Scale matters**: Communities can exist at different levels
+- **Overlapping membership**: Nodes can belong to multiple communities
+- **Dynamic networks**: Communities change over time
+
+### Common Approaches
+
+1. **Modularity optimization**: Find divisions that maximize internal vs. external connections
+2. **Random walks**: Communities are areas where random walks get "trapped"
+3. **Spectral methods**: Use eigenvalues of network matrices
+4. **Label propagation**: Nodes adopt labels of their neighbors
+:::
+
+::: {.column .fragment width="50%"}
+### Modularity
+
+The most common quality measure for communities:
+
+**Q = (fraction of edges within communities) - (expected fraction if random)**
+
+- Q > 0.3 typically indicates good community structure
+- Q = 0 means no better than random
+- Q < 0 means worse than random
+
+### Algorithm Example: Louvain Method
+
+1. Start with each node in its own community
+2. For each node, calculate modularity gain from joining each neighbor's community
+3. Move node to community that gives highest gain
+4. Repeat until no more improvements
+5. Create new network where communities become nodes
+6. Repeat entire process
+
+### Validation Challenge
+
+How do we know if detected communities are "real"?
+- Compare with known ground truth (when available)
+- Check stability across different runs
+- Examine if communities match meaningful social categories
+:::
+::::
+
+## What is Community Detection?
+
+:::: {.columns}
+::: {.column width="50%"}
+### Real-World Applications
+
+**Social Media Analysis**
+- Friend groups on Facebook
+- Topic communities on Twitter
+- Professional networks on LinkedIn
+
+**Biological Networks**
+- Protein complexes in molecular networks
+- Functional modules in brain networks
+- Ecological communities in food webs
+
+**Information Networks**
+- Research fields in citation networks
+- Topic clusters in document networks
+- Product categories in recommendation systems
+
+**Infrastructure Networks**
+- Regional clusters in transportation networks
+- Service areas in utility networks
+:::
+
+::: {.column .fragment width="50%"}
+### Example: Academic Collaboration Network
+
+```{r academic_communities, echo=FALSE}
+# Simulate academic collaboration network
+set.seed(456)
+academic_nodes <- tibble(
+  id = 1:15,
+  researcher = paste0("R", 1:15),
+  field = rep(c("Biology", "Chemistry", "Physics"), each = 5)
+)
+
+# Create field-based collaboration patterns
+academic_edges <- tibble()
+for(i in 1:14) {
+  for(j in (i+1):15) {
+    # Higher collaboration within fields
+    if(academic_nodes$field[i] == academic_nodes$field[j]) {
+      prob <- 0.6
+    } else {
+      prob <- 0.1
+    }
+    
+    if(runif(1) < prob) {
+      academic_edges <- bind_rows(academic_edges, 
+                                 tibble(from = i, to = j, 
+                                       collaborations = sample(1:5, 1)))
+    }
+  }
+}
+
+academic_graph <- tbl_graph(nodes = academic_nodes, edges = academic_edges)
+
+academic_graph |> 
+  ggraph(layout = "kk") +
+  geom_edge_link(aes(width = collaborations), alpha = 0.7, color = "grey50") +
+  geom_node_point(aes(color = field), size = 8) +
+  geom_node_text(aes(label = researcher), color = "white", size = 2.5) +
+  scale_color_manual(values = c("Biology" = "forestgreen", 
+                               "Chemistry" = "firebrick", 
+                               "Physics" = "steelblue")) +
+  scale_edge_width(range = c(0.5, 2), guide = "none") +
+  theme_graph() +
+  labs(color = "Research Field")
+```
+
+[Researchers collaborate more within their academic fields, forming natural communities]{.nord-footer}
+
+### Key Insight
+Community detection reveals the **hidden structure** in networks that might not be obvious from looking at the raw connections alone.
+:::
+::::
+
+## Communities vs. Other Network Concepts
+
+:::: {.columns}
+::: {.column width="50%"}
+### How Communities Relate to Other Concepts
+
+**Communities vs. Homophily**
+- Homophily explains *why* communities form
+- Communities are the *structural result* of homophilic processes
+- Not all homophily leads to clear communities
+
+**Communities vs. Structural Holes**
+- Communities create structural holes *between* them
+- Brokers span structural holes *between* communities
+- Community boundaries are where structural holes appear
+
+**Communities vs. Centrality**
+- Central nodes can be central *within* communities or *between* communities
+- Global centrality ≠ local (within-community) centrality
+- Different centrality measures may identify different types of important nodes
+:::
+
+::: {.column .fragment width="50%"}
+### Integration Example: Social Movement Networks
+
+```{r movement_network, echo=FALSE}
+# Create a social movement network showing all concepts
+movement_nodes <- tibble(
+  id = 1:12,
+  name = c("Org1", "Org2", "Org3", "Bridge1", "Org4", "Org5", 
+          "Org6", "Bridge2", "Org7", "Org8", "Org9", "Media"),
+  type = c(rep("Environmental", 3), "Coalition", rep("Labor", 3), 
+          "Coalition", rep("Civil Rights", 3), "Media"),
+  centrality_type = c("Local", "Local", "Local", "Broker", "Local", "High", 
+                     "Local", "Broker", "Local", "Local", "Local", "Global")
+)
+
+movement_edges <- tibble(
+  from = c(1, 1, 2, 3, 4, 4, 5, 6, 7, 8, 8, 9, 10, 11, 4, 8, 12, 12, 12),
+  to = c(2, 3, 3, 4, 5, 6, 6, 7, 8, 9, 10, 10, 11, 10, 8, 4, 4, 8, 5)
+)
+
+movement_graph <- tbl_graph(nodes = movement_nodes, edges = movement_edges)
+
+movement_graph |> 
+  ggraph(layout = "kk") +
+  geom_edge_link(alpha = 0.7, color = "grey50") +
+  geom_node_point(aes(color = type, size = centrality_type == "High"), stroke = 1.5) +
+  geom_node_text(aes(label = name), size = 2.5, color = "white") +
+  scale_color_manual(values = c("Environmental" = "forestgreen", 
+                               "Labor" = "firebrick", 
+                               "Civil Rights" = "steelblue",
+                               "Coalition" = "gold",
+                               "Media" = "purple")) +
+  scale_size_manual(values = c("TRUE" = 10, "FALSE" = 6), guide = "none") +
+  theme_graph() +
+  labs(color = "Organization Type")
+```
+
+- **Communities**: Environmental, Labor, Civil Rights groups
+- **Structural Holes**: Between different movement sectors  
+- **Brokers**: Coalition organizations spanning holes
+- **Homophily**: Organizations connect with similar causes
+- **Centrality**: Media outlet has high global reach
+:::
+::::
+
+## What are communities/What is community detection
+
+:::: {.columns}
+::: {.column .incremental width="50%"}
+- A cluster is loosely defined as a group of nodes which are internally densely and externally sparsely connected. 
+
+
+
+In contrast, the network below does not really seem to have any well defined cluster structure.
+:::
+
+::: {.column width="50%"}
+```{r clustered_graph,echo=FALSE}
+n1 <- 5
+n2 <- 20
+set.seed(1234)
+g <- sample_islands(n1, n2, 0.9, 5)
+g <- simplify(g)
+V(g)$grp <- rep(LETTERS[1:n1], each = n2)
+ggraph(g, "stress") +
+    geom_edge_link0(edge_width = 0.2, edge_color = "grey66") +
+    geom_node_point(shape = 21, size = 5, aes(fill = grp), show.legend = FALSE) +
+    theme_void()
+```
+:::
+::::
+
+
+```{r random_graph,echo=FALSE}
+n1 <- 5
+n2 <- 20
+
+set.seed(1234)
+g <- sample_islands(n1, n2, 0.25, 15)
+g <- simplify(g)
+V(g)$grp <- rep(LETTERS[1:n1], each = n2)
+ggraph(g, "stress") +
+    geom_edge_link0(edge_width = 0.2, edge_color = "grey66") +
+    geom_node_point(shape = 21, size = 5, fill = "grey66", show.legend = FALSE) +
+    theme_void()
+
+```
 
 ## SNA Origins
 
@@ -512,7 +1361,8 @@ SNA (and network science more generally) is [increasingly computational]{.kn-pin
 :::
 ::::
 
-## Small World Networks
+## Small-World Networks
+
 
 ## Example: Divided They Blog
 
@@ -536,14 +1386,6 @@ $\longleftarrow$<br>This famous figure from @adamic2005political shows a conserv
 
 :::
 ::::
-
-## What is Centrality?
-
-- indegree
-
-## What is Homophily?
-
-## What are Structural Holes?
 
 ## Divided They Blog: Alternative Plots
 
@@ -627,7 +1469,7 @@ Which often translates to:
 :::
 
 
-## What are two mode networks?
+
 
 # Part 2: Hands on
 
