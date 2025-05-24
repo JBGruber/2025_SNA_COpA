@@ -20,10 +20,11 @@ bibliography: references.bib
 
 ```{r setup}
 #| include: false
-library(tidyverse)
+library(tidyverse); theme_set(theme_minimal())
 library(igraph)
 library(tidygraph)
 library(ggraph)
+library(atrrr)
 ```
 
 ```{r}
@@ -549,9 +550,272 @@ polblogs_tbl_new_grouped |>
 ```
 
 
-# Bluesky: What is my network?
+# Bluesky: What is my Bluesky network?
 
-# Bluesky: rstats network (???)
 
-# References
+```{r}
+library(atrrr)
+```
+
+See who follows me:
+
+```{r}
+get_followers(actor = "jbgruber.bsky.social")  |>
+  glimpse()
+```
+
+Check who I follow:
+
+```{r}
+get_follows(actor = "jbgruber.bsky.social")  |>
+  glimpse()
+```
+
+```{r}
+some_followers <- get_followers(actor = "jbgruber.bsky.social", limit = 10)$actor_handle
+
+# For each follower, retrieve their own set of followers.
+# This provides a nested view of relationships.
+followers_of_followers <- some_followers |>
+  purrr::map_dfr(~{
+    get_followers(actor = .x, limit = 200) |>
+    mutate(from = .x)
+  }) |>
+  rename(to = actor_handle) |>
+  select(from, to) %>%
+  add_count(to, name = "n_to") %>%
+  add_count(from, name = "n_from") %>%
+  filter(n_to > 1 | n_from > 1) %>%
+  select(-n_to:-n_from)
+```
+
+```{r}
+# Construct the network graph and plot
+graph <- as_tbl_graph(followers_of_followers, directed = TRUE)
+
+# Use ggraph to visualize the network.
+ggraph(graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point(aes(size = tidygraph::centrality_pagerank()), color = "lightblue") +
+  geom_node_text(aes(label = name, size = tidygraph::centrality_pagerank(), family = "mono", fontface = "bold"),
+    vjust = 1, hjust = 1, check_overlap = T, color = "white", show.legend = F
+  ) +
+  geom_node_text(aes(label = name, size = tidygraph::centrality_pagerank(), family = "mono"),
+    vjust = 1, hjust = 1, check_overlap = T, color = "blue", show.legend = F
+  ) +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+## Who to follow?
+
+```{r}
+my_followers <- get_followers("jbgruber.bsky.social", limit = Inf) |> 
+  # remove columns containing more complex data
+  select(-ends_with("_data"))
+my_follows <- get_follows("jbgruber.bsky.social", limit = Inf) |> 
+  select(-ends_with("_data"))
+not_yet_follows <- my_followers |> 
+  filter(!actor_handle %in% my_follows$actor_handle)
+```
+
+### Who is followed by the people I follow?
+
+```{r}
+follows_of_follows <- my_follows |>
+  pull(actor_handle) |> 
+  # iterate over follows getting their follows
+  map(function(handle) {
+    get_follows(handle, limit = Inf, verbose = FALSE) |>
+      mutate(from = handle)
+  }, .progress = interactive()) |> 
+  bind_rows() |> 
+  # not sure what this means
+  filter(actor_handle != "handle.invalid")
+```
+
+This data is huge! So who in the `not_yet_follows´ list shows up there most often?
+
+```{r}
+follows_of_follows_count <- follows_of_follows |> 
+  count(actor_handle, name = "n_following", sort = TRUE)
+follows_of_follows_count
+```
+
+```{r}
+popular_among_follows <- not_yet_follows |> 
+  left_join(follows_of_follows_count, by = "actor_handle") |> 
+  filter(n_following > 30)
+```
+
+```{r}
+probably_interesting_content <- not_yet_follows |> 
+  filter(!is.na(actor_description)) |> 
+  filter(str_detect(actor_description, regex("#commsky|#polsky|#rstats", 
+                                             ignore_case = TRUE)))
+```
+
+
+# Bluesky: Checking out the #rstats network
+
+```{r}
+rstats_content <- search_skeet("#rstats", since = "2025-04-01", limit = Inf)
+saveRDS(rstats_content, "data/rstats_content.rds")
+```
+
+
+## Semantic Network/Co-hashtag Network
+
+```{r}
+rstats_tags <- rstats_content |> 
+  unnest_longer(tags) |> 
+  mutate(hashtag = tolower(tags))
+
+rstats_tags_count <- rstats_tags |> 
+  count(hashtag)
+
+rstats_tags_count |> 
+  slice_max(order_by = n, n = 10) |> 
+  mutate(hashtag = fct_reorder(hashtag, n)) |> 
+  ggplot(aes(x = n, y = hashtag)) +
+  geom_col()
+```
+
+
+```{r}
+
+rstats_tags_network <- rstats_tags |> 
+  group_by(cid) |> 
+  group_map(function(df, ...) expand_grid(from = df$hashtag, to = df$hashtag)) |> 
+  bind_rows() |> 
+  filter(from != to) |> 
+  tbl_graph(edges = _, directed = FALSE) |> 
+  activate(nodes) |> 
+  left_join(rstats_tags_count, by = c("name" = "hashtag"))
+```
+
+```{r}
+rstats_tags_network |> 
+  activate(nodes) |> 
+  slice_max(order_by = n, n = 50) |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  # geom_node_point(aes(size = n), color = "firebrick") +
+  geom_label(aes(x = x, y = y, label = name)) +
+  # scale_size(limits = c(4, 8)) +
+  theme_graph()
+```
+
+
+
+## Follower Network
+
+```{r}
+rstats_users <- rstats_content |> 
+  distinct(author_handle)
+```
+
+```{r}
+follower_data <- rstats_users |> 
+  slice_head(n = 10) |> 
+  mutate(followed_by = map(author_handle, function(a) get_followers(a)$actor_handle))
+saveRDS(follower_data, "data/follower_data.rds")
+```
+
+Who follows the most accounts contributing to #rstats?
+
+```{r}
+follower_data |> 
+  unnest_longer(followed_by) |> 
+  count(followed_by) |> 
+  slice_max(order_by = n, n = 10) |> 
+  mutate(followed_by = fct_reorder(followed_by, n)) |> 
+  ggplot(aes(x = n, y = followed_by)) +
+  geom_col()
+```
+
+
+```{r}
+follower_network <- follower_data |> 
+  unnest_longer(followed_by, values_to = "to") |> 
+  rename(from = author_handle) |> 
+  tbl_graph(edges = _, directed = TRUE)
+```
+
+```{r}
+follower_network |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_point() +
+  theme_graph()
+```
+
+
+## Mention Network
+
+```{r}
+rstats_mentions <- rstats_content |> 
+  filter(str_detect(text, "@")) |> 
+  mutate(mentions = str_extract_all(text, "@\\w+")) |> 
+  select(from = author_handle, to = mentions) |> 
+  unnest_longer(to)
+```
+
+```{r}
+rstats_mentions |> 
+  count(to) |>
+  slice_max(order_by = n, n = 10) |> 
+  mutate(to = fct_reorder(to, n)) |> 
+  ggplot(aes(x = n, y = to)) +
+  geom_col()
+```
+
+```{r}
+rstats_mentions_netowrk <- tbl_graph(edges = rstats_mentions, directed = TRUE)
+rstats_mentions_netowrk |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_point() +
+  theme_graph() +
+  labs(title = "mention network in #rstats posts")
+```
+
+
+
+## Share/repost Network
+
+```{r}
+repost_data <- rstats_content |> 
+  slice_head(n = 10) |> 
+  mutate(reposts = map(uri, function(u) get_reposts(u)),
+         reposted_by = map(reposts, "actor_handle"))
+
+```
+
+```{r}
+repost_network <- repost_data |> 
+  unnest_longer(reposted_by, values_to = "to") |> 
+  rename(from = author_handle) |> 
+  tbl_graph(edges = _, directed = TRUE)
+```
+
+```{r}
+repost_network |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_point() +
+  theme_graph()
+```
+
+## Influence and Centrality Analysis
+
+```{r}
+follower_network
+```
+
+## Community Detection
+
+```{r}
+follower_network
+```
 
