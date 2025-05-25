@@ -552,119 +552,145 @@ polblogs_tbl_new_grouped |>
 
 # Bluesky: What is my Bluesky network?
 
+When you are new to Bluesky you should start by searching a few names that you know.
+There are also starter packs like <https://bsky.app/starter-pack/sof14g1l.bsky.social/3lbc4bqetfp22> which you can follow.
+But what then?
+Given the idea of homophily, you might want to check who the people you follow, follow themselves.
+So let's get started with that (replace my handle with yours below if you like):
 
 ```{r}
-library(atrrr)
-```
-
-See who follows me:
-
-```{r}
-get_followers(actor = "jbgruber.bsky.social")  |>
+my_follows <- get_follows(actor = "jbgruber.bsky.social", limit = Inf)
+my_follows |>
   glimpse()
 ```
 
-Check who I follow:
+Next, we want to see who they follow:
 
 ```{r}
-get_follows(actor = "jbgruber.bsky.social")  |>
-  glimpse()
-```
-
-```{r}
-some_followers <- get_followers(actor = "jbgruber.bsky.social", limit = 10)$actor_handle
-
-# For each follower, retrieve their own set of followers.
-# This provides a nested view of relationships.
-followers_of_followers <- some_followers |>
-  purrr::map_dfr(~{
-    get_followers(actor = .x, limit = 200) |>
-    mutate(from = .x)
-  }) |>
-  rename(to = actor_handle) |>
-  select(from, to) %>%
-  add_count(to, name = "n_to") %>%
-  add_count(from, name = "n_from") %>%
-  filter(n_to > 1 | n_from > 1) %>%
-  select(-n_to:-n_from)
-```
-
-```{r}
-# Construct the network graph and plot
-graph <- as_tbl_graph(followers_of_followers, directed = TRUE)
-
-# Use ggraph to visualize the network.
-ggraph(graph, layout = "fr") +
-  geom_edge_link() +
-  geom_node_point(aes(size = tidygraph::centrality_pagerank()), color = "lightblue") +
-  geom_node_text(aes(label = name, size = tidygraph::centrality_pagerank(), family = "mono", fontface = "bold"),
-    vjust = 1, hjust = 1, check_overlap = T, color = "white", show.legend = F
-  ) +
-  geom_node_text(aes(label = name, size = tidygraph::centrality_pagerank(), family = "mono"),
-    vjust = 1, hjust = 1, check_overlap = T, color = "blue", show.legend = F
-  ) +
-  theme_void() +
-  theme(legend.position = "bottom")
-```
-
-## Who to follow?
-
-```{r}
-my_followers <- get_followers("jbgruber.bsky.social", limit = Inf) |> 
-  # remove columns containing more complex data
-  select(-ends_with("_data"))
-my_follows <- get_follows("jbgruber.bsky.social", limit = Inf) |> 
-  select(-ends_with("_data"))
-not_yet_follows <- my_followers |> 
-  filter(!actor_handle %in% my_follows$actor_handle)
-```
-
-### Who is followed by the people I follow?
-
-```{r}
-follows_of_follows <- my_follows |>
-  pull(actor_handle) |> 
-  # iterate over follows getting their follows
+#| eval: !expr '!file.exists("data/their_follows.rds")'
+their_follows <- my_follows$actor_handle |> 
+  # the 50 accounts at the bottom of the list are the ones I followed first
+  tail(50) |> 
   map(function(handle) {
-    get_follows(handle, limit = Inf, verbose = FALSE) |>
-      mutate(from = handle)
-  }, .progress = interactive()) |> 
-  bind_rows() |> 
-  # not sure what this means
-  filter(actor_handle != "handle.invalid")
-```
-
-This data is huge! So who in the `not_yet_follows´ list shows up there most often?
-
-```{r}
-follows_of_follows_count <- follows_of_follows |> 
-  count(actor_handle, name = "n_following", sort = TRUE)
-follows_of_follows_count
+  # for demo purposes I add a limit since some follow 1000s
+  tibble(
+    from = handle,
+    to =  get_follows(handle, limit = 1000L, verbose = FALSE)$actor_handle
+  )
+}, .progress = TRUE) |> 
+  bind_rows()
+saveRDS(their_follows, "data/their_follows.rds")
 ```
 
 ```{r}
-popular_among_follows <- not_yet_follows |> 
-  left_join(follows_of_follows_count, by = "actor_handle") |> 
-  filter(n_following > 30)
+their_follows <- readRDS("data/their_follows.rds")
 ```
 
+
+As a first step, we can just check the raw number of who shows up most often here:
+
 ```{r}
-probably_interesting_content <- not_yet_follows |> 
-  filter(!is.na(actor_description)) |> 
-  filter(str_detect(actor_description, regex("#commsky|#polsky|#rstats", 
-                                             ignore_case = TRUE)))
+their_follows |> 
+  count(to) |> 
+  filter(to != "handle.invalid") |> 
+  slice_max(order_by = n, n = 15) |> 
+  mutate(to = fct_reorder(to, n)) |> 
+  ggplot(aes(x = n, y = to)) +
+  geom_col()
 ```
+
+But we can also use network analysis to find influential accounts:
+
+
+```{r}
+follows_graph <- as_tbl_graph(their_follows, directed = TRUE) |> 
+  activate(nodes) %>%
+  mutate(
+    degree = centrality_degree(),
+    closeness = centrality_closeness(),
+    betweeness = centrality_betweenness(),
+    eigenvector = centrality_eigen()
+  )
+```
+
+Let's look at **degree** centrality (simply counts the number of neighbors a node has):
+
+```{r}
+follows_graph |> 
+  as_tibble() |> 
+  arrange(degree) |> 
+  slice_max(degree, n = 10)
+```
+
+ **closeness** (computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes)
+ 
+```{r}
+follows_graph |> 
+  as_tibble() |> 
+  arrange(closeness) |> 
+  slice_max(closeness, n = 10)
+```
+
+**betweeness** (number of shortest paths that pass through a node, divided by the total number of shortest paths) 
+
+```{r}
+central_accounts <- follows_graph |> 
+  as_tibble() |> 
+  arrange(betweeness) |> 
+  slice_max(betweeness, n = 10)
+central_accounts
+```
+
+and **eigenvector centrality** (extends the idea of degree by assuming that a node is central if it is connected to other central nodes)
+
+```{r}
+follows_graph |> 
+  as_tibble() |> 
+  arrange(eigenvector) |> 
+  slice_max(eigenvector, n = 10)
+```
+
+We can also visialise this network and highlight some of the accounts in it:
+
+```{r}
+follows_graph |> 
+  mutate(central_account = name %in% central_accounts$name) |> 
+  slice_max(eigenvector, n = 500) |> 
+  ggraph(layout = "mds") +
+  geom_edge_link(alpha = 0.7) +
+  geom_node_point(aes(size = betweeness, color = central_account)) +
+  scale_color_manual(values = c("TRUE" = "firebrick", "FALSE" = "lightblue")) +
+  geom_node_label(aes(label = ifelse(central_account, name, NA)), vjust = 1, hjust = 1) +
+  theme_graph() +
+  coord_equal(clip = "off")
+```
+
+For a different approach to find people to follow, you can check out <https://www.johannesbgruber.eu/post/2024-11-24-bluesky-rising/>.
 
 
 # Bluesky: Checking out the #rstats network
 
+
+First let's get some data.
+The code below searches for posts that mention the hashtag #rstats, which is widely use for all things R:
+
 ```{r}
+#| eval: !expr '!file.exists("data/rstats_content.rds")'
 rstats_content <- search_skeet("#rstats", since = "2025-04-01", limit = Inf)
 saveRDS(rstats_content, "data/rstats_content.rds")
 ```
 
+```{r}
+rstats_content <- readRDS("data/rstats_content.rds")
+```
+
 
 ## Semantic Network/Co-hashtag Network
+
+The first network we can build from this data is a co-occurence network.
+We check, which hashtags are used together in these posts.
+In other words: the hashtags are nodes, and the edges are whether the hashtags were used together.
+As a first step, let's get some info on the most popular hashtags:
 
 ```{r}
 rstats_tags <- rstats_content |> 
@@ -681,45 +707,127 @@ rstats_tags_count |>
   geom_col()
 ```
 
+Now, to find co-occurrence of hashtags.
+You could also do this with words, but it often comes out less meaningful.
 
 ```{r}
-
-rstats_tags_network <- rstats_tags |> 
+rstats_tags_cooc <- rstats_tags |> 
+  # for each post (or rather for each unique post ID), we get all possible 
+  # combinations of hashtags
   group_by(cid) |> 
   group_map(function(df, ...) expand_grid(from = df$hashtag, to = df$hashtag)) |> 
   bind_rows() |> 
-  filter(from != to) |> 
-  tbl_graph(edges = _, directed = FALSE) |> 
+  # we filter out cases where the hashtag 'coocurrs' with itself
+  filter(from != to)
+rstats_tags_cooc
+```
+
+Now you should notice this looks like a network already.
+Let's make it one:
+
+```{r}
+rstats_tags_network <- tbl_graph(edges = rstats_tags_cooc, directed = FALSE) |> 
   activate(nodes) |> 
   left_join(rstats_tags_count, by = c("name" = "hashtag"))
+rstats_tags_network
 ```
+
+We can try a few things to turn this into a nice plot.
+Let's get a baseline first:
 
 ```{r}
 rstats_tags_network |> 
   activate(nodes) |> 
+  # to make it easier to look at, let's limit ourselves to top hashtags
   slice_max(order_by = n, n = 50) |> 
   ggraph(layout = "stress") +
   geom_edge_link() +
-  # geom_node_point(aes(size = n), color = "firebrick") +
-  geom_label(aes(x = x, y = y, label = name)) +
-  # scale_size(limits = c(4, 8)) +
+  # instead of nodes, I use labels directly here
+  geom_node_label(aes(label = name)) +
   theme_graph()
 ```
 
+We can use color to show the centrality of nodes.
+You can play around with which measure produces the most interesting visual.
+
+```{r}
+rstats_tags_network |> 
+  activate(nodes) |> 
+  mutate(
+    degree = centrality_degree(),
+    closeness = centrality_closeness(),
+    betweeness = centrality_betweenness(),
+    eigenvector = centrality_eigen()
+  ) |> 
+  slice_max(order_by = n, n = 50) |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_label(aes(label = name, fill = eigenvector)) +
+  scale_fill_continuous(low = "lightblue", high = "firebrick") +
+  theme_graph()
+```
+
+We can also see if we can find some communities in this data.
+As above, we are using the Louvain and Leiden algorithms:
+
+```{r}
+rstats_tags_network_communities <- rstats_tags_network |> 
+  activate(nodes) |> 
+  mutate(group_louvain = as.factor(group_louvain()),
+         group_leiden = as.factor(group_leiden()))
+rstats_tags_network_communities |> 
+  as_tibble()
+```
+
+Here is the network grouped by Louvain:
+
+```{r}
+rstats_tags_network_communities |> 
+  slice_max(order_by = n, n = 100) |> 
+  ggraph(layout = "mds") +
+  geom_edge_link() +
+  geom_node_label(aes(label = name, fill = group_louvain), show.legend = FALSE) +
+  theme_graph() +
+  coord_equal(clip = "off")
+```
+
+And here it is grouped by the Leiden algorithm:
+
+```{r}
+rstats_tags_network_communities |> 
+  slice_max(order_by = n, n = 100) |> 
+  ggraph(layout = "mds") +
+  geom_edge_link() +
+  geom_node_label(aes(label = name, fill = group_leiden), show.legend = FALSE) +
+  theme_graph() +
+  coord_equal(clip = "off")
+```
 
 
 ## Follower Network
+
+Within the #rstats content, we can also check the community that posts this content.
+We first get the user handles from the data:
 
 ```{r}
 rstats_users <- rstats_content |> 
   distinct(author_handle)
 ```
 
-```{r}
+Now we query who follows these users who post about #rstats:
+
+```{r follower_data}
+#| eval: !expr '!file.exists("data/follower_data.rds")'
 follower_data <- rstats_users |> 
-  slice_head(n = 10) |> 
-  mutate(followed_by = map(author_handle, function(a) get_followers(a)$actor_handle))
+  mutate(followed_by = map(author_handle, function(a) {
+    # not sure why, but some handles errored when I ran this
+    try(get_followers(a, verbose = FALSE)$actor_handle, silent = TRUE)
+  }, .progress = TRUE))
 saveRDS(follower_data, "data/follower_data.rds")
+```
+
+```{r load_follower_data}
+follower_data <- readRDS("data/follower_data.rds")
 ```
 
 Who follows the most accounts contributing to #rstats?
@@ -734,9 +842,11 @@ follower_data |>
   geom_col()
 ```
 
+We can turn this data into a directed network where the nodes are users and the edges are whether a user follows another:
 
 ```{r}
 follower_network <- follower_data |> 
+  filter(map_lgl(followed_by, function(res) !is(res, "try-error"))) |> 
   unnest_longer(followed_by, values_to = "to") |> 
   rename(from = author_handle) |> 
   tbl_graph(edges = _, directed = TRUE)
@@ -750,8 +860,49 @@ follower_network |>
   theme_graph()
 ```
 
+This is a mess, since there are so many nodes in the network now.
+We can again look for the most central nodes (aka users) in this network:
+
+```{r}
+follower_network_central <- follower_network |> 
+  mutate(
+    degree = centrality_degree(),
+    closeness = centrality_closeness(),
+    betweeness = centrality_betweenness(),
+    eigenvector = centrality_eigen()
+  )
+
+follower_network_central |>
+  arrange(-degree) |> 
+  as_tibble()
+```
+
+Now let's try only the most central accounts:
+
+```{r}
+most_central <- follower_network_central |> 
+  slice_max(eigenvector, n = 5) |> 
+  activate(nodes) |> 
+  as_tibble()
+
+follower_network_central |> 
+  slice_max(eigenvector, n = 100) |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_point(color = "firebrick") +
+  geom_node_label(aes(label = ifelse(name %in% most_central$name,
+                                     name,
+                                     NA))) +
+  theme_graph()
+```
+
+
+
 
 ## Mention Network
+
+We can also contruct a network with users as nodes and mentions as the edges.
+For this, let's extract mentions first:
 
 ```{r}
 rstats_mentions <- rstats_content |> 
@@ -761,6 +912,8 @@ rstats_mentions <- rstats_content |>
   unnest_longer(to)
 ```
 
+Let's see who is mentioned most:
+
 ```{r}
 rstats_mentions |> 
   count(to) |>
@@ -769,6 +922,8 @@ rstats_mentions |>
   ggplot(aes(x = n, y = to)) +
   geom_col()
 ```
+
+The network comes natural at this point:
 
 ```{r}
 rstats_mentions_netowrk <- tbl_graph(edges = rstats_mentions, directed = TRUE)
@@ -781,18 +936,30 @@ rstats_mentions_netowrk |>
 ```
 
 
-
 ## Share/repost Network
 
-```{r}
-repost_data <- rstats_content |> 
-  slice_head(n = 10) |> 
-  mutate(reposts = map(uri, function(u) get_reposts(u)),
-         reposted_by = map(reposts, "actor_handle"))
+Another way to contruct a network from this data is by looking for reposts.
+Here the nodes would be posts
 
+```{r}
+#| eval: !expr '!file.exists("data/repost_data.rds")'
+repost_data <- rstats_content |> 
+  filter(reply_count > 0) |> 
+  mutate(
+    reposts = map(uri, function(u) {
+      get_reposts(u, limit = Inf, verbose = FALSE)
+    }, .progress = TRUE),
+    reposted_by = map(reposts, "actor_handle")
+  )
+saveRDS(repost_data, "data/repost_data.rds")
 ```
 
-```{r}
+```{r load_repost}
+repost_data <- readRDS("data/repost_data.rds")
+```
+
+
+```{r repost_network}
 repost_network <- repost_data |> 
   unnest_longer(reposted_by, values_to = "to") |> 
   rename(from = author_handle) |> 
@@ -801,21 +968,61 @@ repost_network <- repost_data |>
 
 ```{r}
 repost_network |> 
-  ggraph(layout = "stress") +
+  ggraph(layout = "mds") +
   geom_edge_link() +
-  geom_node_point() +
+  geom_node_point(color = "firebrick") +
   theme_graph()
 ```
 
-## Influence and Centrality Analysis
+Let's look at cetrality again to see
 
 ```{r}
-follower_network
+repost_network_central <- repost_network |> 
+  mutate(
+    degree = centrality_degree(),
+    closeness = centrality_closeness(),
+    betweeness = centrality_betweenness(),
+    eigenvector = centrality_eigen()
+  )
+
+repost_network_central |>
+  arrange(-degree) |> 
+  as_tibble()
 ```
 
-## Community Detection
+Let's once again see which are the most central accounts:
 
 ```{r}
-follower_network
+most_central <- repost_network_central |> 
+  slice_max(degree, n = 5) |> 
+  activate(nodes) |> 
+  as_tibble()
+
+repost_network_central |> 
+  slice_max(degree, n = 100) |> 
+  ggraph(layout = "stress") +
+  geom_edge_link() +
+  geom_node_point(color = "firebrick") +
+  geom_node_label(aes(label = ifelse(name %in% most_central$name,
+                                     name,
+                                     NA))) +
+  theme_graph()
+```
+
+Let's see if we can find any sensible communities in this network:
+
+```{r}
+repost_network_central |> 
+  activate(nodes) |>
+  to_undirected() |> 
+  mutate(group_louvain = group_louvain(),
+         group_leiden = group_leiden()) |> 
+  ggraph(layout = "mds") +
+  geom_edge_link() +
+  geom_node_point(aes(color = group_louvain)) +
+  geom_node_label(aes(label = ifelse(name %in% most_central$name,
+                                     name,
+                                     NA))) +
+  theme_graph()
 ```
 
