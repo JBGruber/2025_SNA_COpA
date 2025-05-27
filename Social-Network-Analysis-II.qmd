@@ -5,16 +5,12 @@ footer: "COpA -- 28th May 2025, Elbasan"
 author: "Johannes B. Gruber | GESIS"
 format:
   html: default
-  ipynb:
-    embed-resources: true
-    filters:
-      - filter-code-chunks.lua
 execute: 
   eval: true
-bibliography: references.bib
+  freeze: true
 ---
 
-# Example 1: Divided They Blog
+# Example: Divided They Blog
 
 ## Packages and setup
 
@@ -64,7 +60,7 @@ import requests
 import zipfile
 import io
 import os
-import imageio
+import imageio.v2 as imageio
 from tqdm import tqdm
 import leidenalg
 ```
@@ -134,14 +130,18 @@ print(polblogs_ig.summary())
 We can convert this to a `tidygraph` object:
 
 ```{r}
-#| message: false
-library(tidyverse)
-library(tidygraph)
-polblogs_tbl <- tidygraph::as_tbl_graph(polblogs_igraph)
+polblogs_tbl <- as_tbl_graph(polblogs_igraph)
 class(polblogs_tbl)
 polblogs_tbl
 ```
 
+```{python}
+# Python equivalent using NetworkX for tidygraph-like functionality
+polblogs_nx = ig.Graph.to_networkx(polblogs_ig)
+print(type(polblogs_nx))
+print(f"NetworkX Graph with {polblogs_nx.number_of_nodes()} nodes and {polblogs_nx.number_of_edges()} edges")
+print(f"Directed: {polblogs_nx.is_directed()}")
+```
 
 ## graph data structure in `R`/`Python`
 
@@ -195,10 +195,6 @@ for vertex in polblogs_ig.vs:
         print(vertex)
 ```
 
-:::{.incremental}
-- we can simply use `filter` like this was a normal table 🤯
-- since the data is linked, all the edges belonging to missing nodes disappear as well 😱
-:::
 
 ## working with graph data structures in `R`
 
@@ -237,6 +233,7 @@ polblogs_tbl_new <- polblogs_tbl |>
   mutate(ideology = recode_factor(value, 
                                   "0" = "left",
                                   "1" = "right"))
+polblogs_tbl_new
 ```
 
 ```{python}
@@ -280,14 +277,19 @@ We can answer some initial questions about the data:
 
 - how many connections (edges) do nodes have to other nodes?
 
-:::: {.columns}
-::: {.column width="50%"}
 ```{r}
 polblogs_tbl_new |> 
   activate(edges) |> 
   as_tibble() |> 
   count(from, sort = TRUE)
 ```
+```{python}
+from_counts = edges_df['from'].value_counts().head(10)
+print("Top nodes by outgoing connections:")
+print(from_counts)
+```
+
+
 
 Let's have a closer look at the top node:
 
@@ -297,14 +299,24 @@ polblogs_tbl_new |>
   as_tibble()
 ```
 
-:::
-::: {.column width="50%"}
+```{python}
+print(nodes_df[nodes_df['id'] == 854])
+```
+
+
 ```{r}
 polblogs_tbl_new |> 
   activate(edges) |> 
   as_tibble() |> 
   count(to, sort = TRUE)
 ```
+
+```{python}
+to_counts = edges_df['to'].value_counts().head(10)
+print("\nTop nodes by incoming connections:")
+print(to_counts)
+```
+
 
 Let's have a closer look at the top node:
 
@@ -313,8 +325,11 @@ polblogs_tbl_new |>
   filter(id == 155) |> 
   as_tibble()
 ```
-:::
-::::
+
+
+```{python}
+print(nodes_df[nodes_df['id'] == 154])
+```
 
 ## first insights
 
@@ -331,32 +346,53 @@ polblogs_tbl_new |>
   count(from_ideo, to_ideo)
 ```
 
+```{python}
+nodes_df = pd.DataFrame({
+    'id': range(polblogs_ig.vcount()),
+    'value': polblogs_ig.vs['value'],
+    'name': polblogs_ig.vs['label'],
+    'ideology': polblogs_ig.vs['ideology']
+}) 
+
+# Map ideology to from and to nodes
+edges_df['from_ideo'] = edges_df['from'].map(nodes_df['ideology'])
+edges_df['to_ideo'] = edges_df['to'].map(nodes_df['ideology'])
+
+# Count combinations of from_ideo and to_ideo
+print(edges_df.groupby(['from_ideo', 'to_ideo']).size().reset_index(name='n'))
+```
+
 ## visualising graphs in `R`
 
-:::: {.columns}
-::: {.column width="65%"}
 - `ggraph` inherits the idea of a grammar of graphics from `ggplot`
 - hence, we build up plots in layers with visual aesthetics mapped to data
 - the difference is, we address map data from the nodes and edges table
-:::
 
-::: {.column .fragment width="20%"}
 ![ggraph](https://ggraph.data-imaginist.com/reference/figures/logo.png)
-:::
-::::
 
-## visualising graphs in `R`
 
 ```{r}
-#| output-location: column
-library(ggraph)
-ggraph(graph = polblogs_tbl_new) + 
+ggraph(graph = polblogs_tbl_new, layout = "kk") + 
   geom_edge_link() + 
   geom_node_point(aes(colour = ideology))
 ```
 
+## visualising graphs in `Python`
 
-## Recreate the plot from @adamic2005political
+- Basic network visualization using NetworkX and matplotlib
+
+```{python}
+plt.figure(figsize=(12, 8))
+
+# Get node colors based on ideology
+node_colors = ['#2F357E' if polblogs_ig.vs[i]['ideology'] == 'left' else '#D72F32'
+               for i in range(len(polblogs_ig.vs))]
+
+nx.draw_kamada_kawai(polblogs_nx, with_labels=False, node_color=node_colors)
+plt.show()
+```
+
+## Recreate the plot from Adamic and Glance (2005)
 
 ```{r}
 #| output-location: column
@@ -391,13 +427,47 @@ polblogs_tbl_new |>
   theme_graph()
 ```
 
+```{python}
+plt.figure(figsize=(15, 12))
+
+# Calculate in-degree centrality (referenced)
+in_degrees = polblogs_nx.in_degree()
+referenced = {node: degree for node, degree in in_degrees}
+
+# Remove isolated nodes
+non_isolated_nodes = [node for node in polblogs_nx.nodes() if polblogs_nx.degree(node) > 0]
+subgraph = polblogs_nx.subgraph(non_isolated_nodes)
+
+# Prepare edge colors based on ideology connections
+edge_colors = []
+for edge in subgraph.edges():
+    from_node, to_node = edge
+    from_ideo = polblogs_ig.vs[from_node]['ideology']
+    to_ideo = polblogs_ig.vs[to_node]['ideology']
+    
+    if from_ideo == "left" and to_ideo == "left":
+        edge_colors.append("#2F357E")
+    elif from_ideo == "right" and to_ideo == "right":
+        edge_colors.append("#D72F32")
+    else:  # bipartisan connections
+        edge_colors.append("#f4c23b")
+
+# Prepare node properties
+node_colors = ['#2F357E' if polblogs_ig.vs[node]['ideology'] == 'left' else '#D72F32' 
+               for node in subgraph.nodes()]
+node_sizes = [referenced.get(node, 1) * 10 + 20 for node in subgraph.nodes()]
+
+# Draw the network
+nx.draw_kamada_kawai(subgraph, with_labels=False, node_color=node_colors,
+                     edge_color=edge_colors)
+
+plt.show()
+```
+
 ## volatile layouts
 
-One thing that always makes me cautious about interpreting network plots is how [volatile]{.kn-pink} the placement of nodes in the plot is and how much it can trick you into finding a pattern where none exists.
+One thing that always makes me cautious about interpreting network plots is how volatile the placement of nodes in the plot is and how much it can trick you into finding a pattern where none exists.
 So let's look at an experiment:
-
-:::: {.columns}
-::: {.column width="50%"}
 
 Prepare data for plotting:
 
@@ -417,8 +487,22 @@ plot_data <- polblogs_tbl_new |>
     .N()$ideology[from] == "right" & .N()$ideology[to] == "left" ~ "#f4c23b"
   ))
 ```
-:::
-::: {.column width="50%"}
+
+```{python}
+np.random.seed(1)
+
+# Sample 25% of nodes randomly for faster plotting
+sample_size = int(0.25 * polblogs_nx.number_of_nodes())
+sampled_nodes = np.random.choice(list(polblogs_nx.nodes()), size=sample_size, replace=False)
+plot_subgraph = polblogs_nx.subgraph(sampled_nodes)
+
+# Remove isolated nodes
+non_isolated = [node for node in plot_subgraph.nodes() if plot_subgraph.degree(node) > 0]
+plot_subgraph = plot_subgraph.subgraph(non_isolated)
+
+# Calculate referenced (in-degree)
+in_degrees_sample = plot_subgraph.in_degree()
+```
 
 Get all available layouts:
 
@@ -444,9 +528,19 @@ layouts <- c(
   "tree"        # Tree layout
 )
 ```
-:::
-::::
 
+
+```{python}
+nx_layouts = {
+    'circular': nx.circular_layout,
+    'random': nx.random_layout,
+    'shell': nx.shell_layout,
+    'spring': nx.spring_layout,
+    'kamada_kawai': nx.kamada_kawai_layout,
+    'planar': nx.planar_layout,
+    'spectral': nx.spectral_layout
+}
+```
 
 ## volatile layouts
 
@@ -484,9 +578,89 @@ gif_file <- list.files("media/layouts/", full.names = TRUE) |>
 knitr::include_graphics(gif_file)
 ```
 
+```{python}
+#| eval: false
+# Create plots with different layouts to show volatility
+os.makedirs("media/layouts_py/", exist_ok=True)
+
+def create_network_plot(subgraph, layout_func, layout_name, save_path):
+    plt.figure(figsize=(10, 8))
+    
+    try:
+        if layout_name == 'planar':
+            # Check if graph is planar
+            if nx.is_planar(subgraph):
+                pos = layout_func(subgraph)
+            else:
+                pos = nx.spring_layout(subgraph)  # fallback
+        else:
+            pos = layout_func(subgraph)
+    except:
+        pos = nx.spring_layout(subgraph)  # fallback for any errors
+    
+    # Prepare edge colors
+    edge_colors = []
+    for edge in subgraph.edges():
+        from_node, to_node = edge
+        if from_node < len(polblogs_ig.vs) and to_node < len(polblogs_ig.vs):
+            from_ideo = polblogs_ig.vs[from_node]['ideology']
+            to_ideo = polblogs_ig.vs[to_node]['ideology']
+            
+            if from_ideo == "left" and to_ideo == "left":
+                edge_colors.append("#2F357E")
+            elif from_ideo == "right" and to_ideo == "right":
+                edge_colors.append("#D72F32")
+            else:
+                edge_colors.append("#f4c23b")
+        else:
+            edge_colors.append("#gray")
+    
+    # Prepare node properties
+    node_colors = []
+    node_sizes = []
+    for node in subgraph.nodes():
+        if node < len(polblogs_ig.vs):
+            ideology = polblogs_ig.vs[node]['ideology']
+            node_colors.append('#2F357E' if ideology == 'left' else '#D72F32')
+            node_sizes.append(in_degrees_sample.get(node, 1) * 20 + 30)
+        else:
+            node_colors.append('gray')
+            node_sizes.append(30)
+    
+    # Draw network
+    nx.draw_kamada_kawai(subgraph, with_labels=False, node_color=node_colors,
+                         edge_color=edge_colors)
+    # nx.draw_networkx_edges(subgraph, pos, edge_color=edge_colors, alpha=0.6, 
+    #                       width=0.5, arrows=True, arrowsize=8)
+    # nx.draw_networkx_nodes(subgraph, pos, node_color=node_colors, 
+    #                       node_size=node_sizes, alpha=0.8, edgecolors='black')
+    
+    plt.title(f"Layout: {layout_name}", fontsize=14)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+# Generate plots for different layouts
+layout_files = []
+for layout_name, layout_func in nx_layouts.items():
+    plot_path = f"media/layouts_py/network_{layout_name}.png"
+    print(plot_path)
+    create_network_plot(plot_subgraph, layout_func, layout_name, plot_path)
+    layout_files.append(plot_path)
+    print(f"Created plot with {layout_name} layout")
+
+# Create GIF from the images
+if layout_files:
+    images = [imageio.imread(f) for f in layout_files if os.path.exists(f)]
+    if images:
+        imageio.mimsave("media/layouts_python.gif", images, duration=1.5)
+        print("Created animated GIF showing layout volatility")
+```
+
 ## community detection
 
-In the previous figure we used the political orientation of blogs manually assigned by @adamic2005political.
+In the previous figure we used the political orientation of blogs manually assigned by Adamic and Glance (2005).
 Usually, we want to detect communities from the network structure itself.
 We learned about the [Louvain]{.kn-pink} and [Leiden]{.kn-pink} algorithms (and about their downsides).
 So let's start with these.
@@ -501,6 +675,43 @@ polblogs_tbl_new_grouped <- polblogs_tbl_new |>
 
 polblogs_tbl_new_grouped |> 
   as_tibble()
+```
+
+```{python}
+# Community detection using Louvain and Leiden algorithms
+import leidenalg
+import networkx.algorithms.community as nx_comm
+
+# Convert to undirected graph for community detection
+polblogs_undirected = polblogs_nx.to_undirected()
+
+# Louvain community detection using NetworkX
+louvain_communities = nx_comm.louvain_communities(polblogs_undirected, seed=42)
+
+# Create group assignments for Louvain
+group_louvain = {}
+for i, community in enumerate(louvain_communities):
+    for node in community:
+        group_louvain[node] = i
+
+# Leiden community detection using igraph and leidenalg
+leiden_partition = leidenalg.find_partition(polblogs_ig, leidenalg.ModularityVertexPartition)
+
+# Create group assignments for Leiden
+group_leiden = {}
+for i, community in enumerate(leiden_partition):
+    for node in community:
+        group_leiden[node] = i
+
+# Add community assignments to nodes dataframe
+nodes_df['group_louvain'] = nodes_df['id'].map(group_louvain)
+nodes_df['group_leiden'] = nodes_df['id'].map(group_leiden)
+
+print("Nodes with community assignments:")
+print(nodes_df.head(10))
+
+print(f"\nNumber of Louvain communities: {len(louvain_communities)}")
+print(f"Number of Leiden communities: {len(set(leiden_partition.membership))}")
 ```
 
 ## community detection
@@ -526,6 +737,36 @@ polblogs_tbl_new_grouped |>
   labs(title = "Blogosphere grouped by Louvain")
 ```
 
+```{python}
+# Plot network with Louvain communities
+plt.figure(figsize=(15, 12))
+
+# Create layout
+non_isolated_nodes = [node for node in polblogs_undirected.nodes() if polblogs_undirected.degree(node) > 0]
+subgraph_undirected = polblogs_undirected.subgraph(non_isolated_nodes[1:100])
+# pos = nx.draw_kamada_kawai(subgraph_undirected)
+
+# Prepare node colors based on Louvain communities
+louvain_colors = plt.cm.Set3(np.linspace(0, 1, len(louvain_communities)))
+node_colors_louvain = []
+for node in subgraph_undirected.nodes():
+    community_id = group_louvain.get(node, 0)
+    node_colors_louvain.append(louvain_colors[community_id % len(louvain_colors)])
+
+# Prepare node sizes based on in-degree
+in_degrees_full = polblogs_nx.in_degree()
+
+# Draw the network
+nx.draw_kamada_kawai(subgraph_undirected, edge_color='black',
+                     width=0.2, arrows=True, arrowsize=8, arrowstyle='->',
+                     node_color=node_colors_louvain)
+
+plt.title("Blogosphere grouped by Louvain", fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
 ## community detection
 
 ```{r}
@@ -549,8 +790,46 @@ polblogs_tbl_new_grouped |>
   labs(title = "Blogosphere grouped by Leiden")
 ```
 
+```{python}
+#| eval: false
+# Plot network with Leiden communities
+plt.figure(figsize=(15, 12))
+
+# Use the same layout as before for comparison
+pos = nx.draw_kamada_kawai(subgraph_undirected)
+
+# Prepare node colors based on Leiden communities
+n_leiden_communities = len(set(leiden_partition.membership))
+leiden_colors = plt.cm.Set1(np.linspace(0, 1, n_leiden_communities))
+node_colors_leiden = []
+for node in subgraph_undirected.nodes():
+    community_id = group_leiden.get(node, 0)
+    node_colors_leiden.append(leiden_colors[community_id % len(leiden_colors)])
+
+# Use same node sizes as before
+# node_sizes_leiden = [in_degrees_full.get(node, 1) * 15 + 30 for node in subgraph_undirected.nodes()]
+
+# Draw the network
+nx.draw_networkx_edges(subgraph_undirected, pos, edge_color='gray', alpha=0.3, width=0.2,
+                      arrows=True, arrowsize=8, arrowstyle='->')
+nx.draw_networkx_nodes(subgraph_undirected, pos, node_color=node_colors_leiden, 
+                       alpha=0.8, edgecolors='black', linewidths=0.5)
+
+plt.title("Blogosphere grouped by Leiden", fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
 
 # Bluesky: What is my Bluesky network?
+
+Before we start working with Bluesky, you should authenticate your session:
+
+```{r}
+#| eval: false
+auth("jbgruber.bsky.social")
+```
 
 When you are new to Bluesky you should start by searching a few names that you know.
 There are also starter packs like <https://bsky.app/starter-pack/sof14g1l.bsky.social/3lbc4bqetfp22> which you can follow.
