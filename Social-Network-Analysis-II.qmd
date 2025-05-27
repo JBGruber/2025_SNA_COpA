@@ -4,6 +4,10 @@ subtitle: "COST Action Training School in Computational Opinion Analysis -- COpA
 footer: "COpA -- 28th May 2025, Elbasan"
 author: "Johannes B. Gruber | GESIS"
 format:
+  targetlang-ipynb: 
+    toc: false
+    filters: 
+      - filter-code-chunks.lua
   html: default
 execute: 
   eval: true
@@ -854,7 +858,7 @@ auth("jbgruber.bsky.social")
 ```{python}
 #| eval: false
 client = Client()
-client.login('jbgruber.bsky.social', 'your_password')
+client.login('jbgruber.bsky.social', '4srg-qdme-rgsr-cmal')
 ```
 
 When you are new to Bluesky you should start by searching a few names that you know.
@@ -911,7 +915,7 @@ saveRDS(their_follows, "data/their_follows.rds")
 ```
 
 ```{r}
-if (!file.exists()) {
+if (!file.exists("data/their_follows.rds")) {
   curl::curl_download(
     "https://www.dropbox.com/scl/fi/jc13aic7daa8z6ullv491/their_follows.rds?rlkey=7yp63480tk613ofm83j7sm1ei&st=9bqmj47b&dl=1",
     "data/their_follows.rds"
