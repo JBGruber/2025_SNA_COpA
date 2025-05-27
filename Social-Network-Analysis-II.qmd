@@ -16,6 +16,17 @@ execute:
 
 ```{r setup}
 #| include: false
+# just some code to install packages quickly on Colab
+if (Sys.getenv("COLAB_RELEASE_TAG") != "") {
+  download.file("https://github.com/eddelbuettel/r2u/raw/master/inst/scripts/add_cranapt_focal.sh",
+                "add_cranapt_focal.sh")
+  Sys.chmod("add_cranapt_focal.sh", "0755")
+  system("./add_cranapt_focal.sh")
+}
+# install missing packages
+required <- c("igraph", "tidyverse", "tidygraph", "ggraph", "atrrr")
+missing <- setdiff(required, installed.packages()[,"Package"])
+install.packages(missing, Ncpus = 4)
 library(tidyverse); theme_set(theme_minimal())
 library(igraph)
 library(tidygraph)
@@ -33,12 +44,12 @@ if (!reticulate::condaenv_exists("r-copa")) {
     "numpy",
     "matplotlib",
     "seaborn",
-    # "community",
     "cdlib",
     "imageio",
     "leidenalg",
     "graph-tool",
-    "tqdm"
+    "tqdm",
+    "atproto"
   )
   try(reticulate::install_miniconda(update = TRUE), silent = TRUE)
   reticulate::conda_install("r-copa", packages = packages)
@@ -63,6 +74,13 @@ import os
 import imageio.v2 as imageio
 from tqdm import tqdm
 import leidenalg
+from atproto import Client, models
+import pickle
+import os
+from tqdm import tqdm
+import re
+from itertools import combinations
+import math
 ```
 
 ## The Blogosphere data
@@ -378,6 +396,8 @@ ggraph(graph = polblogs_tbl_new, layout = "kk") +
 ```
 
 ## visualising graphs in `Python`
+
+![NetworkX](https://networkx.org/_static/networkx_logo.svg)
 
 - Basic network visualization using NetworkX and matplotlib
 
@@ -831,6 +851,12 @@ Before we start working with Bluesky, you should authenticate your session:
 auth("jbgruber.bsky.social")
 ```
 
+```{python}
+#| eval: false
+client = Client()
+client.login('jbgruber.bsky.social', 'your_password')
+```
+
 When you are new to Bluesky you should start by searching a few names that you know.
 There are also starter packs like <https://bsky.app/starter-pack/sof14g1l.bsky.social/3lbc4bqetfp22> which you can follow.
 But what then?
@@ -841,6 +867,29 @@ So let's get started with that (replace my handle with yours below if you like):
 my_follows <- get_follows(actor = "jbgruber.bsky.social", limit = Inf)
 my_follows |>
   glimpse()
+```
+
+```{python}
+# Get my follows (replace with your handle)
+def get_follows_data(handle, limit=None):
+    """Get follows for a given handle"""
+    try:
+        response = client.get_follows(handle, limit=limit)
+        follows_data = []
+        for follow in response.follows:
+            follows_data.append({
+                'actor_handle': follow.handle,
+                'actor_did': follow.did,
+                'actor_display_name': follow.display_name or ''
+            })
+        return pd.DataFrame(follows_data)
+    except Exception as e:
+        print(f"Error getting follows for {handle}: {e}")
+        return pd.DataFrame()
+
+my_follows = get_follows_data("jbgruber.bsky.social")
+print(f"Shape of my_follows: {my_follows.shape}")
+print(my_follows.head())
 ```
 
 Next, we want to see who they follow:
@@ -862,9 +911,47 @@ saveRDS(their_follows, "data/their_follows.rds")
 ```
 
 ```{r}
+if (!file.exists()) {
+  curl::curl_download(
+    "https://www.dropbox.com/scl/fi/jc13aic7daa8z6ullv491/their_follows.rds?rlkey=7yp63480tk613ofm83j7sm1ei&st=9bqmj47b&dl=1",
+    "data/their_follows.rds"
+  )
+}
 their_follows <- readRDS("data/their_follows.rds")
 ```
 
+```{python}
+def get_their_follows(handles, limit=100):
+    """Get follows for multiple handles"""
+    their_follows = []
+    
+    for handle in tqdm(handles, desc="Getting follows"):
+        follows_df = get_follows_data(handle, limit=limit)
+        if not follows_df.empty:
+            follows_df['from'] = handle
+            follows_df['to'] = follows_df['actor_handle']
+            their_follows.append(follows_df[['from', 'to']])
+    
+    return pd.concat(their_follows, ignore_index=True) if their_follows else pd.DataFrame()
+
+# Save/load data to avoid repeated API calls
+their_follows_file = "data/their_follows_py.pkl"
+os.makedirs("data", exist_ok=True)
+
+if not os.path.exists(their_follows_file):
+    # Take last 50 accounts I followed
+    recent_follows = my_follows['actor_handle'].tail(50).tolist()
+    their_follows = get_their_follows(recent_follows)
+    
+    with open(their_follows_file, 'wb') as f:
+        pickle.dump(their_follows, f)
+else:
+    with open(their_follows_file, 'rb') as f:
+        their_follows = pickle.load(f)
+
+print(f"Shape of their_follows: {their_follows.shape}")
+print(their_follows.head())
+```
 
 As a first step, we can just check the raw number of who shows up most often here:
 
@@ -876,6 +963,22 @@ their_follows |>
   mutate(to = fct_reorder(to, n)) |> 
   ggplot(aes(x = n, y = to)) +
   geom_col()
+```
+
+```{python}
+# Check raw counts of who shows up most often
+follow_counts = their_follows['to'].value_counts()
+follow_counts = follow_counts[follow_counts.index != 'handle.invalid']
+top_15 = follow_counts.head(15)
+
+plt.figure(figsize=(10, 8))
+plt.barh(range(len(top_15)), top_15.values)
+plt.yticks(range(len(top_15)), top_15.index)
+plt.xlabel('Count')
+plt.title('Most Followed Accounts')
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
 ```
 
 But we can also use network analysis to find influential accounts:
@@ -892,6 +995,26 @@ follows_graph <- as_tbl_graph(their_follows, directed = TRUE) |>
   )
 ```
 
+```{python}
+# Create network graph
+follows_graph = nx.from_pandas_edgelist(their_follows, 'from', 'to', create_using=nx.DiGraph())
+
+# Calculate centrality measures
+degree_centrality = nx.degree_centrality(follows_graph)
+closeness_centrality = nx.closeness_centrality(follows_graph)
+betweenness_centrality = nx.betweenness_centrality(follows_graph)
+eigenvector_centrality = nx.eigenvector_centrality(follows_graph, max_iter=1000)
+
+# Create centrality dataframe
+centrality_df = pd.DataFrame({
+    'name': list(follows_graph.nodes()),
+    'degree': [degree_centrality[node] for node in follows_graph.nodes()],
+    'closeness': [closeness_centrality[node] for node in follows_graph.nodes()],
+    'betweenness': [betweenness_centrality[node] for node in follows_graph.nodes()],
+    'eigenvector': [eigenvector_centrality[node] for node in follows_graph.nodes()]
+})
+```
+
 Let's look at **degree** centrality (simply counts the number of neighbors a node has):
 
 ```{r}
@@ -901,6 +1024,11 @@ follows_graph |>
   slice_max(degree, n = 10)
 ```
 
+```{python}
+print("Top 10 by degree centrality:")
+print(centrality_df.nlargest(10, 'degree')[['name', 'degree']])
+```
+
  **closeness** (computes the shortest path distances among nodes. The most central node has the minimum distance to all other nodes)
  
 ```{r}
@@ -908,6 +1036,11 @@ follows_graph |>
   as_tibble() |> 
   arrange(closeness) |> 
   slice_max(closeness, n = 10)
+```
+
+```{python}
+print("Top 10 by closeness centrality:")
+print(centrality_df.nlargest(10, 'closeness')[['name', 'closeness']])
 ```
 
 **betweeness** (number of shortest paths that pass through a node, divided by the total number of shortest paths) 
@@ -920,6 +1053,12 @@ central_accounts <- follows_graph |>
 central_accounts
 ```
 
+```{python}
+print("Top 10 by betweenness centrality:")
+central_accounts = centrality_df.nlargest(10, 'betweenness')
+print(central_accounts[['name', 'betweenness']])
+```
+
 and **eigenvector centrality** (extends the idea of degree by assuming that a node is central if it is connected to other central nodes)
 
 ```{r}
@@ -927,6 +1066,11 @@ follows_graph |>
   as_tibble() |> 
   arrange(eigenvector) |> 
   slice_max(eigenvector, n = 10)
+```
+
+```{python}
+print("Top 10 by eigenvector centrality:")
+print(centrality_df.nlargest(10, 'eigenvector')[['name', 'eigenvector']])
 ```
 
 We can also visialise this network and highlight some of the accounts in it:
@@ -944,6 +1088,41 @@ follows_graph |>
   coord_equal(clip = "off")
 ```
 
+```{python}
+# Create network visualization highlighting central accounts
+plt.figure(figsize=(15, 12))
+
+# Get top 500 nodes by eigenvector centrality for visualization
+top_nodes = centrality_df.nlargest(500, 'eigenvector')['name'].tolist()
+subgraph = follows_graph.subgraph(top_nodes)
+
+# Get central accounts for highlighting
+central_account_names = central_accounts['name'].tolist()
+
+# Create layout
+pos = nx.spring_layout(subgraph, k=1, iterations=50)
+
+# Draw edges
+nx.draw_networkx_edges(subgraph, pos, alpha=0.3, width=0.5, edge_color='gray')
+
+# Draw nodes
+node_colors = ['firebrick' if node in central_account_names else 'lightblue' 
+               for node in subgraph.nodes()]
+node_sizes = [centrality_df[centrality_df['name'] == node]['betweenness'].iloc[0] * 3000 + 50 
+              for node in subgraph.nodes()]
+
+nx.draw_networkx_nodes(subgraph, pos, node_color=node_colors, node_size=node_sizes, alpha=0.8)
+
+# Add labels for central accounts
+labels = {node: node if node in central_account_names else '' for node in subgraph.nodes()}
+nx.draw_networkx_labels(subgraph, pos, labels, font_size=8)
+
+plt.title('Network of Follows (Central Accounts Highlighted)', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
 For a different approach to find people to follow, you can check out <https://www.johannesbgruber.eu/post/2024-11-24-bluesky-rising/>.
 
 
@@ -955,14 +1134,103 @@ The code below searches for posts that mention the hashtag #rstats, which is wid
 
 ```{r}
 #| eval: !expr '!file.exists("data/rstats_content.rds")'
-rstats_content <- search_skeet("#rstats", since = "2025-04-01", limit = Inf)
+rstats_content <- search_post("#rstats", since = "2025-04-01", limit = Inf)
 saveRDS(rstats_content, "data/rstats_content.rds")
 ```
 
 ```{r}
+if (!file.exists("data/rstats_content.rds")) {
+  curl::curl_download(
+    "https://www.dropbox.com/scl/fi/jc13aic7daa8z6ullv491/their_follows.rds?rlkey=7yp63480tk613ofm83j7sm1ei&st=7hsyjz50&dl=1",
+    "data/rstats_content.rds"
+  )
+}
 rstats_content <- readRDS("data/rstats_content.rds")
 ```
 
+```{python}
+def search_posts(query, since_date=None, limit=None):
+    """Search for posts with specific query using pagination"""
+    posts_data = []
+    total_limit = limit or 100
+    req_limit = min(total_limit, 100)  # API max is 100 per request
+    cursor = None
+    
+    try:
+        while len(posts_data) < total_limit:
+            # Adjust request limit for final batch
+            current_limit = min(req_limit, total_limit - len(posts_data))
+            
+            # Prepare search parameters
+            search_params = {
+                'q': query,
+                'limit': current_limit
+            }
+            
+            # Add cursor for pagination if available
+            if cursor:
+                search_params['cursor'] = cursor
+            
+            # Add since date if provided
+            if since_date:
+                search_params['since'] = since_date
+            
+            # Make API call
+            response = client.app.bsky.feed.search_posts(search_params)
+            
+            # Extract posts from response
+            if hasattr(response, 'posts') and response.posts:
+                for post in response.posts:
+                    # Extract hashtags from text
+                    hashtags = re.findall(r'#\w+', post.record.text.lower())
+                    
+                    posts_data.append({
+                        'cid': post.cid,
+                        'uri': post.uri,
+                        'author_handle': post.author.handle,
+                        'text': post.record.text,
+                        'tags': hashtags,
+                        'reply_count': getattr(post, 'reply_count', 0) or 0,
+                        'repost_count': getattr(post, 'repost_count', 0) or 0,
+                        'like_count': getattr(post, 'like_count', 0) or 0
+                    })
+            else:
+                # No more posts available
+                break
+            
+            # Get cursor for next batch
+            if hasattr(response, 'cursor') and response.cursor:
+                cursor = response.cursor
+            else:
+                # No more pages available
+                break
+            
+            # Optional: show progress
+            if len(posts_data) % 100 == 0:
+                print(f"Retrieved {len(posts_data)} posts so far...")
+        
+        print(f"Total posts retrieved: {len(posts_data)}")
+        return pd.DataFrame(posts_data)
+        
+    except Exception as e:
+        print(f"Error searching posts: {e}")
+        print(f"Retrieved {len(posts_data)} posts before error")
+        return pd.DataFrame(posts_data) if posts_data else pd.DataFrame()
+
+# Save/load data
+rstats_content_file = "data/rstats_content_py.pkl"
+
+if not os.path.exists(rstats_content_file):
+    rstats_content = search_posts("#rstats", since_date="2025-04-01T00:00:00.000Z", limit=math.inf)
+    with open(rstats_content_file, 'wb') as f:
+        pickle.dump(rstats_content, f)
+else:
+    with open(rstats_content_file, 'rb') as f:
+        rstats_content = pickle.load(f)
+
+print(f"Shape of rstats_content: {rstats_content.shape}")
+print(rstats_content.head())
+```
 
 ## Semantic Network/Co-hashtag Network
 
@@ -986,6 +1254,32 @@ rstats_tags_count |>
   geom_col()
 ```
 
+```{python}
+# Extract and count hashtags
+rstats_tags = []
+for idx, row in rstats_content.iterrows():
+    for tag in row['tags']:
+        rstats_tags.append({
+            'cid': row['cid'],
+            'hashtag': tag.lower()
+        })
+
+rstats_tags_df = pd.DataFrame(rstats_tags)
+rstats_tags_count = rstats_tags_df['hashtag'].value_counts().reset_index()
+rstats_tags_count.columns = ['hashtag', 'n']
+
+# Plot top hashtags
+plt.figure(figsize=(10, 8))
+top_hashtags = rstats_tags_count.head(10)
+plt.barh(range(len(top_hashtags)), top_hashtags['n'])
+plt.yticks(range(len(top_hashtags)), top_hashtags['hashtag'])
+plt.xlabel('Count')
+plt.title('Top Hashtags in #rstats Posts')
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+```
+
 Now, to find co-occurrence of hashtags.
 You could also do this with words, but it often comes out less meaningful.
 
@@ -1001,6 +1295,20 @@ rstats_tags_cooc <- rstats_tags |>
 rstats_tags_cooc
 ```
 
+```{python}
+cooccurrence_pairs = []
+for cid in rstats_tags_df['cid'].unique():
+    post_tags = rstats_tags_df[rstats_tags_df['cid'] == cid]['hashtag'].tolist()
+    if len(post_tags) > 1:
+        for pair in combinations(post_tags, 2):
+            cooccurrence_pairs.append({'from': pair[0], 'to': pair[1]})
+            cooccurrence_pairs.append({'from': pair[1], 'to': pair[0]})  # Undirected
+
+rstats_tags_cooc = pd.DataFrame(cooccurrence_pairs)
+print(f"Co-occurrence pairs: {len(rstats_tags_cooc)}")
+print(rstats_tags_cooc.head())
+```
+
 Now you should notice this looks like a network already.
 Let's make it one:
 
@@ -1009,6 +1317,17 @@ rstats_tags_network <- tbl_graph(edges = rstats_tags_cooc, directed = FALSE) |>
   activate(nodes) |> 
   left_join(rstats_tags_count, by = c("name" = "hashtag"))
 rstats_tags_network
+```
+
+```{python}
+# Create hashtag network
+hashtag_network = nx.from_pandas_edgelist(rstats_tags_cooc, 'from', 'to')
+
+# Add node attributes (counts)
+hashtag_counts_dict = dict(zip(rstats_tags_count['hashtag'], rstats_tags_count['n']))
+nx.set_node_attributes(hashtag_network, hashtag_counts_dict, 'count')
+
+print(f"Hashtag network: {hashtag_network.number_of_nodes()} nodes, {hashtag_network.number_of_edges()} edges")
 ```
 
 We can try a few things to turn this into a nice plot.
@@ -1024,6 +1343,24 @@ rstats_tags_network |>
   # instead of nodes, I use labels directly here
   geom_node_label(aes(label = name)) +
   theme_graph()
+```
+
+```{python}
+# Get top 50 hashtags for visualization
+top_50_hashtags = rstats_tags_count.head(50)['hashtag'].tolist()
+hashtag_subgraph = hashtag_network.subgraph(top_50_hashtags)
+
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(hashtag_subgraph, k=2, iterations=50)
+
+# Draw network
+nx.draw_networkx_edges(hashtag_subgraph, pos, alpha=0.3, width=0.5)
+nx.draw_networkx_labels(hashtag_subgraph, pos, font_size=8)
+
+plt.title('Co-occurrence Network of #rstats Hashtags (Top 50)', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
 ```
 
 We can use color to show the centrality of nodes.
@@ -1046,6 +1383,36 @@ rstats_tags_network |>
   theme_graph()
 ```
 
+```{python}
+# Calculate centrality measures for hashtag network
+hashtag_centrality = {
+    'degree': nx.degree_centrality(hashtag_subgraph),
+    'closeness': nx.closeness_centrality(hashtag_subgraph),
+    'betweenness': nx.betweenness_centrality(hashtag_subgraph),
+    'eigenvector': nx.eigenvector_centrality(hashtag_subgraph, max_iter=1000)
+}
+
+# Create visualization with eigenvector centrality coloring
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(hashtag_subgraph, k=2, iterations=50)
+
+# Color nodes by eigenvector centrality
+eigenvector_values = [hashtag_centrality['eigenvector'][node] for node in hashtag_subgraph.nodes()]
+nodes = nx.draw_networkx_nodes(hashtag_subgraph, pos, 
+                              node_color=eigenvector_values, 
+                              cmap='coolwarm', 
+                              node_size=300)
+
+nx.draw_networkx_edges(hashtag_subgraph, pos, alpha=0.3, width=0.5)
+nx.draw_networkx_labels(hashtag_subgraph, pos, font_size=8)
+
+plt.colorbar(nodes, label='Eigenvector Centrality')
+plt.title('Hashtag Network Colored by Eigenvector Centrality', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
 We can also see if we can find some communities in this data.
 As above, we are using the Louvain and Leiden algorithms:
 
@@ -1056,6 +1423,27 @@ rstats_tags_network_communities <- rstats_tags_network |>
          group_leiden = as.factor(group_leiden()))
 rstats_tags_network_communities |> 
   as_tibble()
+```
+
+```{python}
+# import networkx.algorithms.community as nx_comm
+
+louvain_communities = nx.community.louvain_communities(hashtag_subgraph, seed=42)
+# leiden_communities = nx.community.leiden_communities(hashtag_subgraph, seed=42) 
+
+# Create community assignments
+louvain_dict = {}
+for i, community in enumerate(louvain_communities):
+    for node in community:
+        louvain_dict[node] = i
+
+leiden_dict = {}
+# for i, community in enumerate(leiden_communities):
+#     for node in community:
+#         leiden_dict[node] = i
+
+print(f"Louvain found {len(louvain_communities)} communities")
+# print(f"Leiden found {len(leiden_communities)} communities")
 ```
 
 Here is the network grouped by Louvain:
@@ -1070,6 +1458,24 @@ rstats_tags_network_communities |>
   coord_equal(clip = "off")
 ```
 
+```{python}
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(hashtag_subgraph, k=2, iterations=50)
+
+# Color nodes by Louvain communities
+community_colors = plt.cm.Set3(np.linspace(0, 1, len(louvain_communities)))
+node_colors = [community_colors[louvain_dict.get(node, 0)] for node in hashtag_subgraph.nodes()]
+
+nx.draw_networkx_nodes(hashtag_subgraph, pos, node_color=node_colors, node_size=300)
+nx.draw_networkx_edges(hashtag_subgraph, pos, alpha=0.3, width=0.5)
+nx.draw_networkx_labels(hashtag_subgraph, pos, font_size=8)
+
+plt.title('Hashtag Network - Louvain Communities', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
 And here it is grouped by the Leiden algorithm:
 
 ```{r}
@@ -1082,6 +1488,23 @@ rstats_tags_network_communities |>
   coord_equal(clip = "off")
 ```
 
+```python
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(hashtag_subgraph, k=2, iterations=50)
+
+# Color nodes by Leiden communities
+community_colors = plt.cm.Set1(np.linspace(0, 1, len(leiden_communities)))
+node_colors = [community_colors[leiden_dict.get(node, 0)] for node in hashtag_subgraph.nodes()]
+
+nx.draw_networkx_nodes(hashtag_subgraph, pos, node_color=node_colors, node_size=300)
+nx.draw_networkx_edges(hashtag_subgraph, pos, alpha=0.3, width=0.5)
+nx.draw_networkx_labels(hashtag_subgraph, pos, font_size=8)
+
+plt.title('Hashtag Network - Leiden Communities', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
 
 ## Follower Network
 
@@ -1091,6 +1514,12 @@ We first get the user handles from the data:
 ```{r}
 rstats_users <- rstats_content |> 
   distinct(author_handle)
+```
+
+```{python}
+# Get unique users from rstats content
+rstats_users = rstats_content['author_handle'].unique()
+print(f"Unique #rstats users: {len(rstats_users)}")
 ```
 
 Now we query who follows these users who post about #rstats:
@@ -1106,19 +1535,78 @@ saveRDS(follower_data, "data/follower_data.rds")
 ```
 
 ```{r load_follower_data}
+if (!file.exists("data/follower_data.rds")) {
+  curl::curl_download(
+    "https://www.dropbox.com/scl/fi/j9t1uejgs6uqdurfo6fdb/follower_data.rds?rlkey=uueaembzfp0xznxmv3art3zg4&st=u96f11ae&dl=1",
+    "data/follower_data.rds"
+  )
+}
 follower_data <- readRDS("data/follower_data.rds")
+```
+
+```{python}
+def get_followers_data(handle, limit=100):
+    """Get followers for a given handle"""
+    try:
+        response = client.get_followers(handle, limit=limit)
+        followers = [follow.handle for follow in response.followers]
+        return followers
+    except Exception as e:
+        print(f"Error getting followers for {handle}: {e}")
+        return []
+
+# Save/load follower data
+follower_data_file = "data/follower_data_py.pkl"
+
+if not os.path.exists(follower_data_file):
+    follower_data = []
+    for user in tqdm(rstats_users[:50], desc="Getting followers"):  # Limit for demo
+        followers = get_followers_data(user)
+        follower_data.append({
+            'author_handle': user,
+            'followed_by': followers
+        })
+    
+    follower_df = pd.DataFrame(follower_data)
+    with open(follower_data_file, 'wb') as f:
+        pickle.dump(follower_df, f)
+else:
+    with open(follower_data_file, 'rb') as f:
+        follower_df = pickle.load(f)
+
+print(f"Follower data shape: {follower_df.shape}")
 ```
 
 Who follows the most accounts contributing to #rstats?
 
 ```{r}
 follower_data |> 
+  filter(map_lgl(followed_by, function(f) !is(f, "try-error"))) |> 
   unnest_longer(followed_by) |> 
   count(followed_by) |> 
   slice_max(order_by = n, n = 10) |> 
   mutate(followed_by = fct_reorder(followed_by, n)) |> 
   ggplot(aes(x = n, y = followed_by)) +
   geom_col()
+```
+
+```{python}
+# Who follows the most #rstats accounts?
+all_followers = []
+for idx, row in follower_df.iterrows():
+    for follower in row['followed_by']:
+        all_followers.append(follower)
+
+follower_counts = pd.Series(all_followers).value_counts().head(10)
+
+plt.figure(figsize=(10, 8))
+plt.barh(range(len(follower_counts)), follower_counts.values)
+plt.yticks(range(len(follower_counts)), follower_counts.index)
+plt.xlabel('Number of #rstats accounts followed')
+plt.title('Users who follow the most #rstats accounts')
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
 ```
 
 We can turn this data into a directed network where the nodes are users and the edges are whether a user follows another:
@@ -1131,6 +1619,22 @@ follower_network <- follower_data |>
   tbl_graph(edges = _, directed = TRUE)
 ```
 
+```{python}
+# Create follower network edges
+follower_edges = []
+for idx, row in follower_df.iterrows():
+    for follower in row['followed_by']:
+        follower_edges.append({
+            'from': follower,
+            'to': row['author_handle']
+        })
+
+follower_network_df = pd.DataFrame(follower_edges)
+follower_network = nx.from_pandas_edgelist(follower_network_df, 'from', 'to', create_using=nx.DiGraph())
+
+print(f"Follower network: {follower_network.number_of_nodes()} nodes, {follower_network.number_of_edges()} edges")
+```
+
 ```{r}
 follower_network |> 
   ggraph(layout = "stress") +
@@ -1138,6 +1642,14 @@ follower_network |>
   geom_node_point() +
   theme_graph()
 ```
+
+```{python}
+# not a good idea to actually run this, since networkX is so slow
+plt.figure(figsize=(15, 12))
+nx.draw_kamada_kawai(follower_network)
+plt.show()
+```
+
 
 This is a mess, since there are so many nodes in the network now.
 We can again look for the most central nodes (aka users) in this network:
@@ -1154,6 +1666,28 @@ follower_network_central <- follower_network |>
 follower_network_central |>
   arrange(-degree) |> 
   as_tibble()
+```
+
+```{python}
+# Calculate centrality measures for follower network
+follower_centrality = {
+    'degree': nx.degree_centrality(follower_network),
+    'closeness': nx.closeness_centrality(follower_network),
+    'betweenness': nx.betweenness_centrality(follower_network),
+    'eigenvector': nx.eigenvector_centrality(follower_network, max_iter=1000)
+}
+
+# Create centrality dataframe
+follower_centrality_df = pd.DataFrame({
+    'name': list(follower_network.nodes()),
+    'degree': [follower_centrality['degree'][node] for node in follower_network.nodes()],
+    'closeness': [follower_centrality['closeness'][node] for node in follower_network.nodes()],
+    'betweenness': [follower_centrality['betweenness'][node] for node in follower_network.nodes()],
+    'eigenvector': [follower_centrality['eigenvector'][node] for node in follower_network.nodes()]
+})
+
+print("Most central users in follower network:")
+print(follower_centrality_df.nlargest(10, 'degree')[['name', 'degree']])
 ```
 
 Now let's try only the most central accounts:
@@ -1175,7 +1709,31 @@ follower_network_central |>
   theme_graph()
 ```
 
+```{python}
+# Visualize follower network (top 100 nodes by eigenvector centrality)
+top_100_nodes = follower_centrality_df.nlargest(100, 'eigenvector')['name'].tolist()
+most_central_nodes = follower_centrality_df.nlargest(5, 'eigenvector')['name'].tolist()
 
+follower_subgraph = follower_network.subgraph(top_100_nodes)
+
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(follower_subgraph, k=1, iterations=50)
+
+# Draw edges
+nx.draw_networkx_edges(follower_subgraph, pos, alpha=0.3, width=0.5, edge_color='gray')
+
+# Draw nodes
+nx.draw_networkx_nodes(follower_subgraph, pos, node_color='firebrick', node_size=50, alpha=0.8)
+
+# Add labels for most central nodes
+labels = {node: node if node in most_central_nodes else '' for node in follower_subgraph.nodes()}
+nx.draw_networkx_labels(follower_subgraph, pos, labels, font_size=8)
+
+plt.title('Follower Network (#rstats users)', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
 
 
 ## Mention Network
@@ -1191,6 +1749,25 @@ rstats_mentions <- rstats_content |>
   unnest_longer(to)
 ```
 
+```{python}
+# Extract mentions from rstats content
+mention_pattern = r'@(\w+)'
+mention_edges = []
+
+for idx, row in rstats_content.iterrows():
+    if '@' in row['text']:
+        mentions = re.findall(mention_pattern, row['text'])
+        for mention in mentions:
+            mention_edges.append({
+                'from': row['author_handle'],
+                'to': f"@{mention}"
+            })
+
+mentions_df = pd.DataFrame(mention_edges)
+print(f"Mention edges: {len(mentions_df)}")
+print(mentions_df.head())
+```
+
 Let's see who is mentioned most:
 
 ```{r}
@@ -1200,6 +1777,20 @@ rstats_mentions |>
   mutate(to = fct_reorder(to, n)) |> 
   ggplot(aes(x = n, y = to)) +
   geom_col()
+```
+
+```{python}
+# Who is mentioned most?
+mention_counts = mentions_df['to'].value_counts().head(10)
+
+plt.figure(figsize=(10, 8))
+plt.barh(range(len(mention_counts)), mention_counts.values)
+plt.yticks(range(len(mention_counts)), mention_counts.index)
+plt.xlabel('Mention Count')
+plt.title('Most Mentioned Users in #rstats Posts')
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
 ```
 
 The network comes natural at this point:
@@ -1214,6 +1805,21 @@ rstats_mentions_netowrk |>
   labs(title = "mention network in #rstats posts")
 ```
 
+```{python}
+# Create and visualize mention network
+mention_network = nx.from_pandas_edgelist(mentions_df, 'from', 'to', create_using=nx.DiGraph())
+
+plt.figure(figsize=(15, 12))
+pos = nx.spring_layout(mention_network, k=1, iterations=50)
+
+nx.draw_networkx_edges(mention_network, pos, alpha=0.3, width=0.5, edge_color='gray')
+nx.draw_networkx_nodes(mention_network, pos, node_color='firebrick', node_size=30, alpha=0.8)
+
+plt.title('Mention Network in #rstats Posts', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
 
 ## Share/repost Network
 
@@ -1223,7 +1829,7 @@ Here the nodes would be posts
 ```{r}
 #| eval: !expr '!file.exists("data/repost_data.rds")'
 repost_data <- rstats_content |> 
-  filter(reply_count > 0) |> 
+  filter(repost_count > 0) |> 
   mutate(
     reposts = map(uri, function(u) {
       get_reposts(u, limit = Inf, verbose = FALSE)
@@ -1234,15 +1840,74 @@ saveRDS(repost_data, "data/repost_data.rds")
 ```
 
 ```{r load_repost}
+if (!file.exists("data/repost_data.rds")) {
+  curl::curl_download(
+    "",
+    "data/repost_data.rds"
+  )
+}
 repost_data <- readRDS("data/repost_data.rds")
 ```
 
+```{python}
+def get_reposts_data(uri, limit=100):
+    """Get reposts for a specific post URI"""
+    try:
+        response = client.app.bsky.feed.get_reposted_by({"uri": uri, "limit": limit})
+        # reposts = response.reposted_by
+        reposts = [repost.handle for repost in response.reposted_by]
+        return reposts
+    except Exception as e:
+        print(f"Error getting reposts for {uri}: {e}")
+        return []
+
+# Get repost data for posts with replies
+repost_data_file = "data/repost_data_py.pkl"
+
+if not os.path.exists(repost_data_file):
+    repost_data = []
+    posts_with_replies = rstats_content[rstats_content['reply_count'] > 0]
+    
+    for idx, row in tqdm(posts_with_replies.head(20).iterrows(), desc="Getting reposts"):
+        reposts = get_reposts_data(row['uri'])
+        if reposts:
+            repost_data.append({
+                'uri': row['uri'],
+                'author_handle': row['author_handle'],
+                'reposted_by': reposts
+            })
+    
+    repost_df = pd.DataFrame(repost_data)
+    with open(repost_data_file, 'wb') as f:
+        pickle.dump(repost_df, f)
+else:
+    with open(repost_data_file, 'rb') as f:
+        repost_df = pickle.load(f)
+
+print(f"Repost data shape: {repost_df.shape}")
+```
 
 ```{r repost_network}
 repost_network <- repost_data |> 
   unnest_longer(reposted_by, values_to = "to") |> 
   rename(from = author_handle) |> 
   tbl_graph(edges = _, directed = TRUE)
+```
+
+```{python}
+# Create repost network edges
+repost_edges = []
+for idx, row in repost_df.iterrows():
+    for reposter in row['reposted_by']:
+        repost_edges.append({
+            'from': row['author_handle'],
+            'to': reposter
+        })
+
+repost_network_df = pd.DataFrame(repost_edges)
+repost_network = nx.from_pandas_edgelist(repost_network_df, 'from', 'to', create_using=nx.DiGraph())
+
+print(f"Repost network: {repost_network.number_of_nodes()} nodes, {repost_network.number_of_edges()} edges")
 ```
 
 ```{r}
@@ -1253,7 +1918,20 @@ repost_network |>
   theme_graph()
 ```
 
-Let's look at cetrality again to see
+```{python}
+plt.figure(figsize=(12, 10))
+pos = nx.spring_layout(repost_network, k=1, iterations=50)
+
+nx.draw_networkx_edges(repost_network, pos, alpha=0.3, width=0.5, edge_color='gray')
+nx.draw_networkx_nodes(repost_network, pos, node_color='firebrick', node_size=50, alpha=0.8)
+
+plt.title('Repost Network (#rstats)', fontsize=16)
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+```
+
+Let's look at centrality again to see
 
 ```{r}
 repost_network_central <- repost_network |> 
@@ -1267,6 +1945,28 @@ repost_network_central <- repost_network |>
 repost_network_central |>
   arrange(-degree) |> 
   as_tibble()
+```
+
+```{python}
+# Calculate centrality for repost network
+repost_centrality = {
+    'degree': nx.degree_centrality(repost_network),
+    'closeness': nx.closeness_centrality(repost_network),
+    'betweenness': nx.betweenness_centrality(repost_network),
+    'eigenvector': nx.eigenvector_centrality(repost_network, max_iter=1000)
+}
+
+repost_centrality_df = pd.DataFrame({
+    'name': list(repost_network.nodes()),
+    'degree': [repost_centrality['degree'][node] for node in repost_network.nodes()],
+    'closeness': [repost_centrality['closeness'][node] for node in repost_network.nodes()],
+    'betweenness': [repost_centrality['betweenness'][node] for node in repost_network.nodes()],
+    'eigenvector': [repost_centrality['eigenvector'][node] for node in repost_network.nodes()]
+})
+
+print("Most central users in repost network:")
+most_central_repost = repost_centrality_df.nlargest(5, 'degree')
+print(most_central_repost[['name', 'degree']])
 ```
 
 Let's once again see which are the most central accounts:
@@ -1288,6 +1988,33 @@ repost_network_central |>
   theme_graph()
 ```
 
+```{python}
+# Visualize with top nodes highlighted
+top_100_repost = repost_centrality_df.nlargest(100, 'degree')['name'].tolist()
+most_central_names = most_central_repost['name'].tolist()
+
+if top_100_repost:
+    repost_subgraph = repost_network.subgraph(top_100_repost)
+    
+    plt.figure(figsize=(15, 12))
+    pos = nx.spring_layout(repost_subgraph, k=1, iterations=50)
+    
+    # Draw edges
+    nx.draw_networkx_edges(repost_subgraph, pos, alpha=0.3, width=0.5, edge_color='gray')
+    
+    # Draw nodes
+    nx.draw_networkx_nodes(repost_subgraph, pos, node_color='firebrick', node_size=50, alpha=0.8)
+    
+    # Add labels for most central nodes
+    labels = {node: node if node in most_central_names else '' for node in repost_subgraph.nodes()}
+    nx.draw_networkx_labels(repost_subgraph, pos, labels, font_size=8)
+    
+    plt.title('Repost Network with Central Users Highlighted', fontsize=16)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+```
+
 Let's see if we can find any sensible communities in this network:
 
 ```{r}
@@ -1305,3 +2032,44 @@ repost_network_central |>
   theme_graph()
 ```
 
+```{python}
+# Community detection for repost network
+if repost_network.number_of_nodes() > 0:
+    # Convert to undirected for community detection
+    repost_undirected = repost_network.to_undirected()
+    
+    if repost_undirected.number_of_nodes() > 1:
+        louvain_repost = nx_comm.louvain_communities(repost_undirected, seed=42)
+        
+        # Create community visualization
+        plt.figure(figsize=(12, 10))
+        pos = nx.spring_layout(repost_undirected, k=1, iterations=50)
+        
+        # Color nodes by community
+        community_colors = plt.cm.Set3(np.linspace(0, 1, len(louvain_repost)))
+        louvain_repost_dict = {}
+        for i, community in enumerate(louvain_repost):
+            for node in community:
+                louvain_repost_dict[node] = i
+        
+        node_colors = [community_colors[louvain_repost_dict.get(node, 0)] 
+                      for node in repost_undirected.nodes()]
+        
+        nx.draw_networkx_edges(repost_undirected, pos, alpha=0.3, width=0.5, edge_color='gray')
+        nx.draw_networkx_nodes(repost_undirected, pos, node_color=node_colors, node_size=50, alpha=0.8)
+        
+        # Add labels for most central nodes
+        labels = {node: node if node in most_central_names else '' for node in repost_undirected.nodes()}
+        nx.draw_networkx_labels(repost_undirected, pos, labels, font_size=8)
+        
+        plt.title('Repost Network with Louvain Communities', fontsize=16)
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+        
+        print(f"Found {len(louvain_repost)} communities in repost network")
+    else:
+        print("Not enough nodes for community detection in repost network")
+else:
+    print("No repost network data available")
+```
