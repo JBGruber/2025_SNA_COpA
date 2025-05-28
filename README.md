@@ -18,3 +18,8 @@ Colab:
   Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/JBGruber/2025_SNA_COpA/blob/main/Social-Network-Analysis-II-4r.ipynb)
 - For Python users: [![Open In
   Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/JBGruber/2025_SNA_COpA/blob/main/Social-Network-Analysis-II-4py.ipynb)
+
+For the second half of the practical demonstration, you need a Bluesky
+account. It’s free and you don’t have to use your real name, if you
+don’t want to. With regular account, you can access the API. Just
+register at <https://bsky.app/>.
