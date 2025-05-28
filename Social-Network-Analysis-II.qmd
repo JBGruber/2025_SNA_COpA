@@ -858,7 +858,7 @@ auth("jbgruber.bsky.social")
 ```{python}
 #| eval: false
 client = Client()
-client.login('jbgruber.bsky.social', '4srg-qdme-rgsr-cmal')
+client.login('jbgruber.bsky.social', 'your_passwordl')
 ```
 
 When you are new to Bluesky you should start by searching a few names that you know.
